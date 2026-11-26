@@ -92,9 +92,25 @@ def profile_reencode_and_export(
         engine="streaming",
     )
 
-    # Plain CSV, streamed to disk rather than collecting the full table in memory.
+    # CSV has no native nested types. JSON-encode nested values in CSV cells;
+    # the Parquet file above retains its original native types.
+    csv_lazy = pl.scan_parquet(parquet_path)
+    nested_columns = [col for col in columns if schema[col].is_nested()]
+    if nested_columns:
+        print(f"JSON-encoding nested CSV columns for {name}: {nested_columns}")
+        csv_lazy = csv_lazy.with_columns(
+            pl.col(col).map_elements(
+                lambda value: None if value is None else json.dumps(
+                    value, ensure_ascii=False, separators=(",", ":"), default=str
+                ),
+                return_dtype=pl.String,
+                skip_nulls=False,
+            ).alias(col)
+            for col in nested_columns
+        )
+
     csv_path = workdir / f"{name}.csv"
-    pl.scan_parquet(parquet_path).sink_csv(
+    csv_lazy.sink_csv(
         csv_path,
         include_header=True,
         maintain_order=True,
@@ -111,6 +127,7 @@ def profile_reencode_and_export(
         "source_bytes": source_path.stat().st_size,
         "processed_parquet_bytes": parquet_path.stat().st_size,
         "processed_csv_bytes": csv_path.stat().st_size,
+        "nested_columns_json_encoded_in_csv": nested_columns,
         "source_sha256": sha256_file(source_path),
         "processed_parquet_sha256": sha256_file(parquet_path),
         "processed_csv_sha256": sha256_file(csv_path),
@@ -178,8 +195,9 @@ def main() -> None:
             "project": "FreshRetailNet-50K",
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "processing_policy": (
-                "Schema-preserving Parquet re-encoding and CSV export; "
-                "no rows dropped, columns renamed, or values imputed."
+                "Schema-preserving Parquet re-encoding and CSV export. Nested "
+                "values are JSON strings in CSV only; Parquet retains native types. "
+                "No rows dropped, columns renamed, or values imputed."
             ),
             "bucket": bucket,
             "datasets": datasets,
