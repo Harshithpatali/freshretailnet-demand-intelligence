@@ -1,6 +1,6 @@
 # R2 data processing
 
-The raw dataset remains in the private R2 bucket. The manual GitHub Actions workflow reads it, performs schema and null profiling, and writes processed outputs back to the **same bucket**.
+The private R2 bucket is the source of truth for raw and processed data. The manual GitHub Actions workflow reads the raw Parquet files, profiles them, re-encodes Parquet with Zstandard, exports plain CSV files, and writes all outputs back to the **same bucket**.
 
 ## Workflow
 
@@ -24,9 +24,13 @@ The R2 token should have Object Read & Write access scoped to the target bucket.
 
 - `processed/train.parquet`
 - `processed/eval.parquet`
+- `processed/train.csv`
+- `processed/eval.csv`
 - `processed/data_quality_report.json`
 - `processed/null_profile.csv`
 
-The first processing pass is deliberately schema-preserving. It re-encodes the Parquet files using Zstandard compression and preserves values, columns, and row order. It does not drop rows, impute missing values, or alter business meaning. The report records row counts, column types, null counts, file sizes, and SHA-256 checksums.
+CSV files are plain UTF-8 CSV with headers. They can be substantially larger than Parquet; the workflow streams CSV output to local disk rather than collecting the entire dataset in memory, then uploads the files to R2. Check the reported CSV object sizes and available R2 storage before running.
+
+The processing pass preserves values, columns, and row order. It does not drop rows, impute missing values, or rename columns. The report records row counts, column types, null counts, file sizes, and SHA-256 checksums.
 
 Review the report and schema before implementing domain-specific cleaning, stockout-aware demand reconstruction, or feature engineering. Those steps must be based on the actual dataset fields and a documented validation strategy.
