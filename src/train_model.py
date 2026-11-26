@@ -61,9 +61,9 @@ def load_features_from_frame(df: pl.DataFrame) -> pl.DataFrame:
         lag_expr.append(pl.col("stock_status_sum").shift(lag).over(group).alias(f"stock_status_lag_{lag}"))
     df=df.with_columns(lag_expr)
     df=df.with_columns([
-        pl.col("sale_amount").shift(1).rolling_mean(window_size=7,min_periods=1).over(group).alias("sales_roll_mean_7"),
-        pl.col("sale_amount").shift(1).rolling_mean(window_size=28,min_periods=1).over(group).alias("sales_roll_mean_28"),
-        pl.col("sale_amount").shift(1).rolling_std(window_size=7,min_periods=2).over(group).fill_null(0).alias("sales_roll_std_7"),
+        pl.col("sale_amount").shift(1).rolling_mean(window_size=7,min_samples=1).over(group).alias("sales_roll_mean_7"),
+        pl.col("sale_amount").shift(1).rolling_mean(window_size=28,min_samples=1).over(group).alias("sales_roll_mean_28"),
+        pl.col("sale_amount").shift(1).rolling_std(window_size=7,min_samples=2).over(group).fill_null(0).alias("sales_roll_std_7"),
     ])
     # Do not include current-day hourly sales or current-day stock observations:
     # both are contemporaneous with the target and would leak the answer.
