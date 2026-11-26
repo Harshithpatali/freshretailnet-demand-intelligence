@@ -11,7 +11,6 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 import boto3
-import numpy as np
 import polars as pl
 from botocore.config import Config
 
