@@ -102,12 +102,12 @@ def main():
             pl.col("product_id").n_unique().alias("products"),
             pl.col("date").min().cast(pl.String).alias("date_start"),
             pl.col("date").max().cast(pl.String).alias("date_end"),
-            pl.col("status_vector_length").value_counts().sort("status_vector_length").alias("vector_lengths"),
             (~pl.col("window_count_matches")).sum().alias("window_count_mismatches"),
             pl.col("stock_hour6_22_cnt").mean().alias("mean_stockout_hours_06_22"),
             (pl.col("stock_hour6_22_cnt") > 0).mean().alias("stockout_affected_row_rate"),
             (pl.col("stock_hour6_22_cnt") == 16).mean().alias("full_window_stockout_rate"),
         ]).to_dicts()[0]
+        integrity["vector_lengths"] = df.group_by("status_vector_length").len().sort("status_vector_length").to_dicts()
         integrity["generated_at_utc"] = datetime.now(timezone.utc).isoformat()
         integrity["interpretation"] = (
             "Association with observed sales only. Stockout-affected sales are censored; "
