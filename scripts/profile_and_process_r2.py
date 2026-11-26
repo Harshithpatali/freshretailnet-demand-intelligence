@@ -1,8 +1,8 @@
-"""Validate, profile, and re-encode FreshRetailNet Parquet files in Cloudflare R2.
+"""Validate, profile, and export FreshRetailNet datasets in Cloudflare R2.
 
-This first processing stage is intentionally schema-preserving: it does not drop
-rows, impute values, or rename columns. It writes Zstandard-compressed Parquet
-copies and data-quality metadata back to the same R2 bucket.
+The pipeline preserves the source values, columns, and row order. It writes
+Zstandard Parquet plus plain CSV copies and data-quality metadata to the same
+private R2 bucket. CSV export uses Polars' streaming sink.
 """
 from __future__ import annotations
 
@@ -39,7 +39,28 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def profile_and_reencode(name: str, source_path: Path, workdir: Path) -> tuple[Path, dict, list[dict]]:
+def upload_and_verify(s3, bucket: str, path: Path, key: str, content_type: str) -> int:
+    print(f"Uploading {path.name} to s3://{bucket}/{key}")
+    s3.upload_file(
+        str(path),
+        bucket,
+        key,
+        ExtraArgs={"ContentType": content_type},
+    )
+    head = s3.head_object(Bucket=bucket, Key=key)
+    actual_size = int(head["ContentLength"])
+    expected_size = path.stat().st_size
+    if actual_size != expected_size:
+        raise RuntimeError(
+            f"R2 size verification failed for {key}: expected {expected_size}, got {actual_size}"
+        )
+    print(f"Verified {key}: {actual_size:,} bytes")
+    return actual_size
+
+
+def profile_reencode_and_export(
+    name: str, source_path: Path, workdir: Path
+) -> tuple[Path, Path, dict, list[dict]]:
     lazy = pl.scan_parquet(source_path)
     schema = lazy.collect_schema()
     columns = list(schema.names())
@@ -61,10 +82,9 @@ def profile_and_reencode(name: str, source_path: Path, workdir: Path) -> tuple[P
             "null_fraction": (nulls / row_count) if row_count else None,
         })
 
-    output_path = workdir / f"{name}.parquet"
-    # Re-encode without changing values, columns, or row order.
+    parquet_path = workdir / f"{name}.parquet"
     lazy.sink_parquet(
-        output_path,
+        parquet_path,
         compression="zstd",
         compression_level=6,
         statistics=True,
@@ -72,20 +92,32 @@ def profile_and_reencode(name: str, source_path: Path, workdir: Path) -> tuple[P
         engine="streaming",
     )
 
+    # Plain CSV, streamed to disk rather than collecting the full table in memory.
+    csv_path = workdir / f"{name}.csv"
+    pl.scan_parquet(parquet_path).sink_csv(
+        csv_path,
+        include_header=True,
+        maintain_order=True,
+        engine="streaming",
+    )
+
     metadata = {
         "dataset": name,
         "source_object": INPUTS[name],
-        "processed_object": f"{OUTPUT_PREFIX}/{name}.parquet",
+        "processed_parquet_object": f"{OUTPUT_PREFIX}/{name}.parquet",
+        "processed_csv_object": f"{OUTPUT_PREFIX}/{name}.csv",
         "rows": row_count,
         "columns": len(columns),
         "source_bytes": source_path.stat().st_size,
-        "processed_bytes": output_path.stat().st_size,
+        "processed_parquet_bytes": parquet_path.stat().st_size,
+        "processed_csv_bytes": csv_path.stat().st_size,
         "source_sha256": sha256_file(source_path),
-        "processed_sha256": sha256_file(output_path),
+        "processed_parquet_sha256": sha256_file(parquet_path),
+        "processed_csv_sha256": sha256_file(csv_path),
         "schema": {col: str(schema[col]) for col in columns},
         "null_cells": sum(int(summary[col]) for col in columns),
     }
-    return output_path, metadata, null_profile
+    return parquet_path, csv_path, metadata, null_profile
 
 
 def main() -> None:
@@ -115,36 +147,40 @@ def main() -> None:
             if not local_input.exists() or local_input.stat().st_size == 0:
                 raise RuntimeError(f"Missing or empty input object: {key}")
 
-            output_path, metadata, null_profile = profile_and_reencode(name, local_input, workdir)
+            parquet_path, csv_path, metadata, null_profile = profile_reencode_and_export(
+                name, local_input, workdir
+            )
             datasets.append(metadata)
             all_null_profiles.extend(null_profile)
 
-            output_key = f"{OUTPUT_PREFIX}/{name}.parquet"
-            print(f"Uploading processed Parquet to s3://{bucket}/{output_key}")
-            s3.upload_file(
-                str(output_path),
-                bucket,
-                output_key,
-                ExtraArgs={"ContentType": "application/vnd.apache.parquet"},
+            upload_and_verify(
+                s3, bucket, parquet_path, f"{OUTPUT_PREFIX}/{name}.parquet",
+                "application/vnd.apache.parquet",
             )
-            head = s3.head_object(Bucket=bucket, Key=output_key)
-            if head["ContentLength"] != output_path.stat().st_size:
-                raise RuntimeError(f"R2 size verification failed for {output_key}")
-            print(f"Verified {output_key}: {head['ContentLength']:,} bytes; rows={metadata['rows']}")
+            upload_and_verify(
+                s3, bucket, csv_path, f"{OUTPUT_PREFIX}/{name}.csv", "text/csv",
+            )
+            print(
+                f"Completed {name}: rows={metadata['rows']:,}, "
+                f"columns={metadata['columns']}, "
+                f"CSV={metadata['processed_csv_bytes']:,} bytes"
+            )
 
-        # The two splits should have the same ordered column names for consistent modelling.
         train_cols = list(datasets[0]["schema"].keys())
         eval_cols = list(datasets[1]["schema"].keys())
         if train_cols != eval_cols:
             raise RuntimeError(
-                "Train/eval column names or order differ. Processed Parquet files were uploaded; "
+                "Train/eval column names or order differ. Files were uploaded; "
                 "inspect the schema report before modelling."
             )
 
         report = {
             "project": "FreshRetailNet-50K",
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "processing_policy": "Schema-preserving Zstandard re-encoding; no rows dropped or values imputed.",
+            "processing_policy": (
+                "Schema-preserving Parquet re-encoding and CSV export; "
+                "no rows dropped, columns renamed, or values imputed."
+            ),
             "bucket": bucket,
             "datasets": datasets,
         }
@@ -153,20 +189,15 @@ def main() -> None:
         profile_path = workdir / "null_profile.csv"
         pl.DataFrame(all_null_profiles).write_csv(profile_path)
 
-        for local_path, key, content_type in [
-            (report_path, f"{OUTPUT_PREFIX}/data_quality_report.json", "application/json"),
-            (profile_path, f"{OUTPUT_PREFIX}/null_profile.csv", "text/csv"),
-        ]:
-            s3.upload_file(
-                str(local_path),
-                bucket,
-                key,
-                ExtraArgs={"ContentType": content_type},
-            )
-            s3.head_object(Bucket=bucket, Key=key)
-            print(f"Uploaded report: s3://{bucket}/{key}")
+        upload_and_verify(
+            s3, bucket, report_path, f"{OUTPUT_PREFIX}/data_quality_report.json",
+            "application/json",
+        )
+        upload_and_verify(
+            s3, bucket, profile_path, f"{OUTPUT_PREFIX}/null_profile.csv", "text/csv",
+        )
 
-    print("Processing complete. Processed Parquet and profiling reports are in the same R2 bucket.")
+    print("Processing complete. Parquet, CSV, and profiling reports are in the same R2 bucket.")
 
 
 if __name__ == "__main__":
