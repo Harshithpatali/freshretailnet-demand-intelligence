@@ -31,8 +31,7 @@ def r2_client():
         aws_access_key_id=env("R2_ACCESS_KEY_ID"), aws_secret_access_key=env("R2_SECRET_ACCESS_KEY"),
         region_name="auto", config=Config(signature_version="s3v4",retries={"max_attempts":5,"mode":"standard"}))
 
-def load_features(path: Path) -> pl.DataFrame:
-    df=pl.read_parquet(path)
+def load_features_from_frame(df: pl.DataFrame) -> pl.DataFrame:
     required={"store_id","product_id","dt","sale_amount","hours_sale","hours_stock_status"}
     missing=required-set(df.columns)
     if missing: raise ValueError(f"Required columns absent: {sorted(missing)}")
@@ -70,7 +69,7 @@ def load_features(path: Path) -> pl.DataFrame:
     # both are contemporaneous with the target and would leak the answer.
     excluded={"dt","date","sale_amount","hours_sale","hours_stock_status",
               "hourly_sales_sum","hourly_sales_mean","hourly_sales_peak","hourly_slots",
-              "stock_status_sum","stock_status_slots"}
+              "stock_status_sum","stock_status_slots","stock_hour6_22_cnt"}
     features=[c for c in df.columns if c not in excluded]
     df=df.drop_nulls(subset=["sales_lag_1","sales_lag_7"])
     return df.select(["date","sale_amount"]+features)
@@ -87,15 +86,19 @@ def metric_pack(y,p):
 def main():
     bucket=env("R2_BUCKET"); s3=r2_client()
     with tempfile.TemporaryDirectory(prefix="frn-model-") as td:
-        root=Path(td); frames={}
+        root=Path(td); raw_frames={}
         for split,key in RAW.items():
             local=root/f"{split}.parquet"
             print(f"Downloading {key}")
             s3.download_file(bucket,key,str(local))
-            frames[split]=load_features(local)
-            print(f"{split}: {frames[split].height:,} rows after lag warm-up; features={len(frames[split].columns)-2}")
-        train=frames["train"]
-        eval_df=frames["eval"]
+            raw_frames[split]=pl.read_parquet(local)
+        # Build lags on combined chronological history so eval uses train context.
+        eval_dates=set(raw_frames["eval"].get_column("dt").unique().to_list())
+        combined=pl.concat([raw_frames["train"],raw_frames["eval"]],how="vertical_relaxed")
+        all_features=load_features_from_frame(combined)
+        eval_df=all_features.filter(pl.col("date").cast(pl.String).is_in(list(eval_dates)))
+        train=all_features.filter(~pl.col("date").cast(pl.String).is_in(list(eval_dates)))
+        print(f"train: {train.height:,}; eval: {eval_df.height:,}; features={len(train.columns)-2}")
         # Chronological holdout from the latest 14 distinct training dates.
         dates=train.select(pl.col("date").unique().sort()).to_series().to_list()
         if len(dates)<30: raise ValueError("Insufficient unique training dates for a 14-day holdout and lag history")
