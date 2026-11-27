@@ -152,4 +152,12 @@ def wavelet_predictions(
     if product_id is not None and "product_id" in df.columns:
         df = df[df["product_id"].astype(str) == product_id]
     total = len(df)
-    return {"total": int(total), "rows": df.head(limit).replace({float("nan"): None}).to_dict(orient="records")}
+    series = []
+    if {"store_id", "product_id"}.issubset(df.columns):
+        pairs = df[["store_id", "product_id"]].astype(str).drop_duplicates().sort_values(["store_id", "product_id"])
+        series = [{"store_id": r.store_id, "product_id": r.product_id} for r in pairs.itertuples(index=False)]
+    return {
+        "total": total,
+        "series": series,
+        "rows": df.head(limit).replace({float("nan"): None}).to_dict(orient="records"),
+    }
