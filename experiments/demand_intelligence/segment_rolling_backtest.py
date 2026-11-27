@@ -182,10 +182,17 @@ def main():
     tr=pdf[pdf.target_date.dt.normalize().isin(td)].copy()
     va=pdf[pdf.target_date.dt.normalize().isin(vd)].copy()
     ev=pdf[pdf.target_date.dt.normalize().isin(ed)].copy()
-    excluded={"target","target_date","date","sale_amount","dt","hours_sale","hours_stock_status","origin_date"}
-    allfeat=[c for c in pdf.columns if c not in excluded and not c.startswith("hours_")]
-    exp_only=set(target_cal_cols)|{"demand_adi_56","demand_cv2_56","demand_segment","target_day_of_week","target_day_of_month","target_month","target_dow_sin","target_dow_cos"}
-    basefeat=[c for c in allfeat if c not in exp_only]
+    # Derive production features from the exact feature-loader output. Remove
+    # only the three demand-segmentation fields added by this experiment.
+    segment_feature_cols=["demand_adi_56","demand_cv2_56","demand_segment"]
+    basefeat=[c for c in frame.columns
+              if c not in {"date","sale_amount",*segment_feature_cols}]
+    target_date_feature_cols=["target_day_of_week","target_day_of_month",
+                              "target_month","target_dow_sin","target_dow_cos"]
+    allfeat=basefeat+segment_feature_cols+target_cal_cols+target_date_feature_cols
+    missing_features=set(allfeat)-set(pdf.columns)
+    if missing_features:
+     raise RuntimeError(f"h={h}: feature columns missing after target/calendar joins: {sorted(missing_features)}")
     cats=[c for c in ["city_id","store_id","management_group_id","first_category_id","second_category_id","third_category_id","product_id","day_of_week","month","demand_segment","target_day_of_week","target_month"] if c in allfeat]
     baseline=fit_model(tr,va,basefeat,cats)
     pb=np.maximum(predict_frame(baseline,ev,basefeat,cats),0)
