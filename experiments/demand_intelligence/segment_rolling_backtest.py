@@ -130,24 +130,27 @@ def main():
    dates=sorted(pdf.target_date.dt.normalize().unique())
    # Reserve the latest 3 disjoint 7-day blocks as test windows; each has its own
    # immediately preceding 7-day validation block and expanding historical train.
-   # Start with the latest disjoint blocks, but shift the whole backtest
-   # earlier when the first fold would leave too little expanding training history.
+   # Keep three disjoint test folds, shrinking each test block when the
+   # horizon shift leaves fewer dates. Training and validation lengths stay fixed.
    required_prior=MIN_TRAIN_DATES+BLOCK_DAYS
-   available_prior=len(dates)-FOLDS*BLOCK_DAYS
-   offset=max(0,required_prior-available_prior)
-   if len(dates)-offset < FOLDS*BLOCK_DAYS+required_prior:
+   max_test_days=(len(dates)-required_prior)//FOLDS
+   effective_block_days=min(BLOCK_DAYS,max_test_days)
+   if effective_block_days<1:
     raise RuntimeError(
-     f"h={h}: insufficient dates for {FOLDS} folds "
-     f"({MIN_TRAIN_DATES} train + {BLOCK_DAYS} validation + "
-     f"{FOLDS*BLOCK_DAYS} test dates required)"
+     f"h={h}: insufficient dates ({len(dates)}) for "
+     f"{MIN_TRAIN_DATES} train + {BLOCK_DAYS} validation + "
+     f"{FOLDS} non-empty test folds"
     )
-   block_start=len(dates)-offset-FOLDS*BLOCK_DAYS
+   total_test_days=FOLDS*effective_block_days
+   block_start=len(dates)-total_test_days
    test_blocks=[
-    dates[block_start+i*BLOCK_DAYS:block_start+(i+1)*BLOCK_DAYS]
+    dates[block_start+i*effective_block_days:block_start+(i+1)*effective_block_days]
     for i in range(FOLDS)
    ]
+   print(f"h={h}: {len(dates)} target dates; {FOLDS} test folds x "
+         f"{effective_block_days} days; min train={MIN_TRAIN_DATES}, validation={BLOCK_DAYS}")
    for fi,ed in enumerate(test_blocks,1):
-    if len(ed)!=BLOCK_DAYS: raise RuntimeError(f"h={h} fold={fi}: expected {BLOCK_DAYS} test dates, got {len(ed)}")
+    if len(ed)!=effective_block_days: raise RuntimeError(f"h={h} fold={fi}: expected {effective_block_days} test dates, got {len(ed)}")
     first=ed[0]; prior=[d for d in dates if d<first]
     if len(prior)<MIN_TRAIN_DATES+BLOCK_DAYS: raise RuntimeError(f"h={h} fold={fi}: insufficient pre-test history ({len(prior)} dates)")
     vd=prior[-BLOCK_DAYS:]; td=prior[:-BLOCK_DAYS]
@@ -207,8 +210,8 @@ def main():
    stability.append({"horizon_days":int(h),"segment":seg,"validation_wins":wins,"eligible_folds":folds,
     "stable_specialist":bool(stable),"selection_frequency_pct":100*wins/max(folds,1)})
   report={"experiment":"multi-window rolling backtest with validation-gated segment specialists",
-   "fold_design":{"folds":FOLDS,"test_block_days":BLOCK_DAYS,"validation_block_days":BLOCK_DAYS,
-    "training":"expanding chronological history","test_windows_disjoint":True},
+   "fold_design":{"folds":FOLDS,"configured_test_block_days":BLOCK_DAYS,"validation_block_days":BLOCK_DAYS,
+    "training":"expanding chronological history","test_windows_disjoint":True,"effective_test_block_days_by_horizon":{str(h):len([a for a in audits if a["horizon_days"]==h and a["fold"]==1]) for h in HORIZONS}},
    "selection_policy":{"metric":"segment validation MAE","minimum_gain_pct":MIN_VALIDATION_GAIN_PCT,
     "stability_rule":"recommend a segment specialist only if validation selects it in at least 2 of 3 folds",
     "test_isolation":"test blocks are never used to select a specialist; only validation scores control routing"},
