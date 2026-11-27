@@ -45,7 +45,7 @@ def build_wavelet_features(frame: pd.DataFrame) -> pd.DataFrame:
         # preceding one target date; no current/future target enters a window.
         windows = np.lib.stride_tricks.sliding_window_view(
             sales, WINDOW
-        )[:-0 or None]
+        )[:-1]
         # windows[k] covers sales[k:k+32], and predicts date index k+32.
         coeffs = pywt.wavedec(
             windows, WAVELET, mode="periodization", level=LEVEL, axis=1
