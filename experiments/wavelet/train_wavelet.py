@@ -153,7 +153,7 @@ def main():
                 "negative_values_mean_improvement": True,
             },
             "experiment": {
-                "wavelet": "db4", "decomposition_level": 2, "history_window_days": 32,
+                "wavelet": "db2", "decomposition_level": 2, "history_window_days": 32,
                 "features": WAVELET_COLUMNS,
                 "validation_period": {"start": str(min(valid_dates)), "end": str(max(valid_dates))},
                 "evaluation_period": {"start": str(eval_df["date"].min()), "end": str(eval_df["date"].max())},
