@@ -44,24 +44,45 @@ def render_wavelet_tab(api_base, get_json, metric, compact_table):
             "RMSE": values.get("rmse"),
             "WAPE (%)": values.get("wape_pct"),
         })
+    baseline_metrics = evaluation.get("lightgbm_same_rows", {})
+    naive_metrics = evaluation.get("seasonal_naive_lag7", {})
+    wave_metrics = evaluation.get("wavelet_lightgbm", {})
+    for row in rows:
+        key = next(k for k, label in model_keys if label == row["Model"])
+        values = evaluation.get(key, {})
+        for metric_name, metric_key in (("MAE", "mae"), ("RMSE", "rmse"), ("WAPE", "wape_pct")):
+            base_value = baseline_metrics.get(metric_key)
+            naive_value = naive_metrics.get(metric_key)
+            current_value = values.get(metric_key)
+            row[f"{metric_name} change vs LightGBM (%)"] = (
+                (current_value / base_value - 1) * 100
+                if current_value is not None and base_value else None
+            )
+            row[f"{metric_name} change vs naive (%)"] = (
+                (current_value / naive_value - 1) * 100
+                if current_value is not None and naive_value else None
+            )
     comparison_df = pd.DataFrame(rows)
-    compact_table(comparison_df, 190)
+    compact_table(comparison_df, 240)
 
-    base_col, wave_col = st.columns(2)
-    mae_change = comparisons.get("evaluation_mae_change_pct_vs_same_row_lightgbm")
-    wape_change = comparisons.get("evaluation_wape_change_pct_vs_same_row_lightgbm")
-    with base_col:
-        if mae_change is not None:
-            metric("Wavelet MAE change vs LightGBM", f"{mae_change:+.2f}%",
-                   "Negative means improvement; positive means degradation.")
-    with wave_col:
-        if wape_change is not None:
-            metric("Wavelet WAPE change vs LightGBM", f"{wape_change:+.2f}%",
-                   "Negative means improvement; positive means degradation.")
+    delta_cols = st.columns(3)
+    for column, metric_name, metric_key in zip(
+        delta_cols,
+        ("MAE", "RMSE", "WAPE"),
+        ("mae", "rmse", "wape_pct"),
+    ):
+        base_value = baseline_metrics.get(metric_key)
+        current_value = wave_metrics.get(metric_key)
+        if base_value and current_value is not None:
+            change = (current_value / base_value - 1) * 100
+            with column:
+                metric(f"Wavelet {metric_name} change vs LightGBM", f"{change:+.2f}%",
+                       "Negative means improvement; positive means degradation.")
 
     st.caption(
-        "Percentage change = (wavelet metric / same-row LightGBM metric − 1) × 100. "
-        "Negative values indicate improvement; positive values indicate degradation."
+        "Percentage change = (candidate metric / comparator metric − 1) × 100. "
+        "Negative values indicate improvement; positive values indicate degradation. "
+        "The table reports changes against both same-row LightGBM and seasonal naive."
     )
     metric_rows = []
     for split_name, split_data in (("Validation", validation), ("Evaluation", evaluation)):
