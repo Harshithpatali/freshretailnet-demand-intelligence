@@ -17,10 +17,10 @@ jobs:
           python-version: "3.11"
       - name: Install experiment dependencies
         run: python -m pip install --upgrade boto3 polars pyarrow pandas numpy scikit-learn lightgbm PyWavelets
-      - name: Train same-row controls and wavelet-enhanced model
+      - name: Run wavelet ablation, family comparison, and paired bootstrap
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: python experiments/wavelet/train_wavelet.py
+        run: python experiments/wavelet/robustness.py
