@@ -26,7 +26,6 @@ WAVELET_COLUMNS = [
     "wavelet_approx_energy",
     "wavelet_detail_energy_l1",
     "wavelet_detail_energy_l2",
-    "wavelet_detail_energy_l3",
     "wavelet_coefficient_entropy",
     "wavelet_high_low_energy_ratio",
     "wavelet_smoothed_mean_32",
@@ -91,6 +90,7 @@ def main():
             pl.col("dt").str.to_date(strict=False).alias("date")
         ).drop("dt").to_pandas()
         wave = build_wavelet_features(wave_input)
+        wave["date"] = pd.to_datetime(wave["date"]).dt.date
         wave_pl = pl.from_pandas(wave)
         merged = base.join(
             wave_pl, on=["store_id", "product_id", "date"], how="inner"
@@ -153,7 +153,7 @@ def main():
                 "negative_values_mean_improvement": True,
             },
             "experiment": {
-                "wavelet": "db4", "decomposition_level": 3, "history_window_days": 32,
+                "wavelet": "db4", "decomposition_level": 2, "history_window_days": 32,
                 "features": WAVELET_COLUMNS,
                 "validation_period": {"start": str(min(valid_dates)), "end": str(max(valid_dates))},
                 "evaluation_period": {"start": str(eval_df["date"].min()), "end": str(eval_df["date"].max())},
