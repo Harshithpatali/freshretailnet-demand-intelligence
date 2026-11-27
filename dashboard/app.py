@@ -56,7 +56,7 @@ freshness = {
     "Quantile forecast": quant.get("generated_at_utc"),
     "Stockout diagnostics": stock.get("generated_at_utc"),
 }
-tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation", "SQL EDA"])
+tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation", "SQL EDA", "Experiment lab"])
 
 with tabs[0]:
     ev = point.get("evaluation", {})
@@ -231,3 +231,123 @@ with tabs[5]:
         st.warning("SQL EDA results are not published yet. Run the FreshRetailNet SQL EDA workflow in GitHub Actions, then refresh this page.")
     except Exception as exc:
         st.error(f"Could not load SQL EDA results: {exc}")
+
+
+with tabs[6]:
+    st.subheader("Experiment lab")
+    st.caption("Run a configurable, reproducible what-if inventory experiment on one held-out store-product series. Results are a small-sample simulation, not causal estimates or operational savings.")
+    exp_filters = get_json("/api/v1/filters")
+    exp_series = exp_filters.get("series", [])
+    if not exp_series:
+        st.warning("No evaluation series are available from the API.")
+    else:
+        exp_labels = [f"Store {x['store_id']} · Product {x['product_id']}" for x in exp_series]
+        exp_idx = st.selectbox("Experimental series", range(len(exp_labels)), format_func=lambda i: exp_labels[i], key="exp_series")
+        exp_chosen = exp_series[exp_idx]
+        p1, p2, p3 = st.columns(3)
+        with p1:
+            lead_days = st.number_input("Lead time (days)", min_value=1, max_value=7, value=1, step=1)
+            review_days = st.number_input("Review period (days)", min_value=1, max_value=7, value=1, step=1)
+        with p2:
+            starting_stock = st.number_input("Starting inventory (units)", min_value=0.0, value=0.0, step=1.0)
+            holding_rate = st.number_input("Holding cost / unit / day", min_value=0.0, value=0.05, step=0.05, format="%.3f")
+        with p3:
+            shortage_rate = st.number_input("Shortage penalty / unit", min_value=0.0, value=2.0, step=0.5)
+            order_rate = st.number_input("Ordering cost / order", min_value=0.0, value=5.0, step=1.0)
+        exp_start = exp_filters["dates"]["start"]
+        exp_end = exp_filters["dates"]["end"]
+        if st.button("Run experiment", type="primary", use_container_width=True):
+            try:
+                with st.spinner("Loading held-out series and simulating policies..."):
+                    exp_data = get_json("/api/v1/forecasts", {
+                        "store_id": exp_chosen["store_id"], "product_id": exp_chosen["product_id"],
+                        "date_from": exp_start, "date_to": exp_end, "limit": 100
+                    })
+                experiment_df = pd.DataFrame(exp_data.get("rows", []))
+                if experiment_df.empty:
+                    st.error("No evaluation observations were returned for this series.")
+                else:
+                    experiment_df["date"] = pd.to_datetime(experiment_df["date"])
+                    experiment_df = experiment_df.sort_values("date").reset_index(drop=True)
+                    policy_cols = {
+                        "Seasonal naive lag-7": "seasonal_naive_lag7",
+                        "Median forecast P50": "p50",
+                        "Calibrated upper P90": "p90_calibrated",
+                    }
+                    outputs = []
+                    curves = []
+                    for policy_name, forecast_col in policy_cols.items():
+                        inventory_level = float(starting_stock)
+                        pipeline = {}
+                        fulfilled = 0.0
+                        shortage_units = 0.0
+                        holding_total = 0.0
+                        ordering_total = 0.0
+                        orders = 0
+                        stock_path = []
+                        for day_idx, row in experiment_df.iterrows():
+                            inventory_level += pipeline.pop(day_idx, 0.0)
+                            if day_idx % int(review_days) == 0:
+                                horizon = min(len(experiment_df), day_idx + int(lead_days) + int(review_days))
+                                target = max(0.0, float(experiment_df.loc[day_idx:horizon-1, forecast_col].clip(lower=0).sum()))
+                                position = inventory_level + sum(pipeline.values())
+                                quantity = max(0.0, float(__import__("math").ceil(target - position)))
+                                arrival = day_idx + int(lead_days)
+                                if quantity > 0 and arrival < len(experiment_df):
+                                    pipeline[arrival] = pipeline.get(arrival, 0.0) + quantity
+                                    orders += 1
+                                    ordering_total += float(order_rate)
+                            actual = max(0.0, float(row["actual_sale_amount"]))
+                            sold = min(inventory_level, actual)
+                            fulfilled += sold
+                            shortage_units += actual - sold
+                            inventory_level = max(0.0, inventory_level - sold)
+                            holding_total += inventory_level * float(holding_rate)
+                            stock_path.append(inventory_level)
+                            curves.append({"date": row["date"], "policy": policy_name, "ending_inventory": inventory_level})
+                        observed = float(experiment_df["actual_sale_amount"].clip(lower=0).sum())
+                        total_cost = holding_total + shortage_units * float(shortage_rate) + ordering_total
+                        outputs.append({
+                            "policy": policy_name, "observed_sales_proxy_units": observed,
+                            "fulfilled_units": fulfilled,
+                            "fill_rate_pct": fulfilled / observed * 100 if observed else 0.0,
+                            "unfulfilled_observed_sales_units": shortage_units,
+                            "orders_placed": orders, "holding_cost": holding_total,
+                            "shortage_cost": shortage_units * float(shortage_rate),
+                            "ordering_cost": ordering_total, "total_simulated_cost": total_cost,
+                        })
+                    result_df = pd.DataFrame(outputs)
+                    st.session_state["freshretail_last_experiment"] = result_df
+                    st.session_state["freshretail_last_experiment_curves"] = pd.DataFrame(curves)
+                    st.session_state["freshretail_last_experiment_config"] = {
+                        "store_id": exp_chosen["store_id"], "product_id": exp_chosen["product_id"],
+                        "lead_time_days": int(lead_days), "review_period_days": int(review_days),
+                        "initial_stock_units": float(starting_stock), "holding_cost_per_unit_day": float(holding_rate),
+                        "shortage_penalty_per_unit": float(shortage_rate), "ordering_cost_per_order": float(order_rate),
+                        "evaluation_start": str(experiment_df["date"].min().date()),
+                        "evaluation_end": str(experiment_df["date"].max().date()),
+                    }
+                    st.success("Experiment completed. Results are stored in this browser session.")
+            except Exception as exc:
+                st.error(f"Experiment failed: {exc}")
+        if "freshretail_last_experiment" in st.session_state:
+            result_df = st.session_state["freshretail_last_experiment"]
+            curves_df = st.session_state["freshretail_last_experiment_curves"]
+            config = st.session_state["freshretail_last_experiment_config"]
+            st.markdown("#### Experiment results")
+            k1, k2, k3 = st.columns(3)
+            best_fill = result_df.loc[result_df["fill_rate_pct"].idxmax()]
+            best_cost = result_df.loc[result_df["total_simulated_cost"].idxmin()]
+            with k1: metric("Highest fill rate", f"{best_fill['fill_rate_pct']:.1f}%", best_fill["policy"])
+            with k2: metric("Lowest simulated cost", f"{best_cost['total_simulated_cost']:,.2f}", best_cost["policy"])
+            with k3: metric("Series", f"{config['store_id']} / {config['product_id']}")
+            compact_table(result_df, 260)
+            cost_fig = px.bar(result_df, x="policy", y="total_simulated_cost", title="Simulated cost by policy", text_auto=",.2f")
+            cost_fig.update_layout(height=360, yaxis_title="Simulation cost units")
+            st.plotly_chart(cost_fig, use_container_width=True)
+            inv_fig = px.line(curves_df, x="date", y="ending_inventory", color="policy", title="Ending inventory trajectory")
+            inv_fig.update_layout(height=360, yaxis_title="Ending inventory (units)")
+            st.plotly_chart(inv_fig, use_container_width=True)
+            st.download_button("Download experiment results (CSV)", result_df.to_csv(index=False), "freshretailnet_experiment_results.csv", "text/csv")
+            st.download_button("Download experiment configuration (JSON)", __import__("json").dumps(config, indent=2), "freshretailnet_experiment_config.json", "application/json")
+            st.warning("Interpretation limits: this experiment uses observed sales as a demand proxy, has a short evaluation horizon, and assumes deterministic lead time. It does not estimate causal effects or real-world savings. Orders arriving after the evaluation horizon are suppressed.")
