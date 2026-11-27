@@ -58,6 +58,9 @@ def align(frames,cats):
  return fs
 
 def fit_reg(tr,va,ev,features,cats,objective="regression_l1"):
+ # A model may intentionally omit segment/calendar columns; categorical names must
+ # be restricted to the exact feature matrix passed to LightGBM.
+ cats=[c for c in cats if c in features]
  tr,va,ev=align([tr,va,ev],cats)
  params={**PARAMS,"objective":"regression","metric":"l1"}
  if objective=="huber": params.update(objective="huber",alpha=0.9,metric="l1")
@@ -67,6 +70,7 @@ def fit_reg(tr,va,ev,features,cats,objective="regression_l1"):
  return np.maximum(m.predict(ev[features],num_iteration=m.best_iteration),0),int(m.best_iteration)
 
 def fit_hurdle(tr,va,ev,features,cats):
+ cats=[c for c in cats if c in features]
  tr,va,ev=align([tr,va,ev],cats)
  # Occurrence classifier plus positive-demand size model; avoids treating zeros as continuous noise.
  ybin=(tr.target.to_numpy()>0).astype(int)
