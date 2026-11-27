@@ -30,57 +30,85 @@ def r2_client():
         config=Config(signature_version="s3v4", retries={"max_attempts":5,"mode":"standard"}),
     )
 
-def simulate(frame, quantile, lead_time, review_period, holding_cost, shortage_cost,
-             order_cost, initial_stock):
-    """Daily periodic-review, order-up-to policy with deterministic lead-time pipeline."""
-    rows=[]
-    for (store, product), g in frame.groupby(["store_id","product_id"], sort=False):
-        g=g.sort_values("date").reset_index(drop=True)
-        n=len(g)
-        actual=g["actual_sale_amount"].to_numpy(dtype=float)
-        forecast=g[quantile].to_numpy(dtype=float)
-        inventory=float(initial_stock)
-        pipeline={}
-        total_ordered=0.0
-        total_orders=0
-        total_shortage=0.0
-        total_holding=0.0
-        total_ordering=0.0
-        total_sold=0.0
+def simulate(frame, forecast_col, policy_label, lead_time, review_period, holding_cost,
+             shortage_cost, order_cost, initial_stock):
+    """Periodic-review order-up-to simulation with explicit warm-up and horizon handling."""
+    rows = []
+    for (store, product), g in frame.groupby(["store_id", "product_id"], sort=False):
+        g = g.sort_values("date").reset_index(drop=True)
+        n = len(g)
+        actual = g["actual_sale_amount"].to_numpy(dtype=float)
+        forecast = np.maximum(g[forecast_col].to_numpy(dtype=float), 0.0)
+        inventory = float(initial_stock)
+        pipeline = {}
+        totals = {"units_ordered": 0.0, "orders_placed": 0, "orders_suppressed": 0,
+                  "units_suppressed": 0.0, "shortage": 0.0, "holding": 0.0,
+                  "ordering": 0.0, "fulfilled": 0.0}
+        steady = {k: 0.0 for k in totals}
+        warmup_days = min(lead_time, n)
         for i in range(n):
-            # Receive orders due at the start of the day.
             inventory += pipeline.pop(i, 0.0)
-            # Forecast demand over lead time plus the review protection period.
-            end=min(n, i+max(1, lead_time+review_period))
-            protection_demand=float(np.maximum(forecast[i:end],0).sum())
-            on_order=float(sum(pipeline.values()))
-            inventory_position=inventory+on_order
-            qty=max(0.0, protection_demand-inventory_position)
-            qty=float(np.ceil(qty))
-            if qty>0:
-                arrival_day=i+max(1,lead_time)
-                if arrival_day<n:
-                    pipeline[arrival_day]=pipeline.get(arrival_day,0.0)+qty
-                total_ordered += qty
-                total_orders += 1
-                total_ordering += order_cost
-            demand=max(0.0,float(actual[i]))
-            sold=min(inventory,demand)
-            shortage=max(0.0,demand-sold)
-            inventory=max(0.0,inventory-sold)
-            total_sold += sold
-            total_shortage += shortage
-            total_holding += inventory*holding_cost
-        total_cost=total_holding+total_shortage*shortage_cost+total_ordering
+            if i % review_period == 0:
+                horizon_end = min(n, i + lead_time + review_period)
+                protection_demand = float(forecast[i:horizon_end].sum())
+                inventory_position = inventory + float(sum(pipeline.values()))
+                qty = float(np.ceil(max(0.0, protection_demand - inventory_position)))
+                if qty > 0:
+                    arrival_day = i + lead_time
+                    if arrival_day < n:
+                        pipeline[arrival_day] = pipeline.get(arrival_day, 0.0) + qty
+                        totals["units_ordered"] += qty
+                        totals["orders_placed"] += 1
+                        totals["ordering"] += order_cost
+                        if i >= warmup_days:
+                            steady["units_ordered"] += qty
+                            steady["orders_placed"] += 1
+                            steady["ordering"] += order_cost
+                    else:
+                        totals["orders_suppressed"] += 1
+                        totals["units_suppressed"] += qty
+                        if i >= warmup_days:
+                            steady["orders_suppressed"] += 1
+                            steady["units_suppressed"] += qty
+            demand = max(0.0, float(actual[i]))
+            sold = min(inventory, demand)
+            shortage = max(0.0, demand - sold)
+            inventory = max(0.0, inventory - sold)
+            holding = inventory * holding_cost
+            totals["fulfilled"] += sold
+            totals["shortage"] += shortage
+            totals["holding"] += holding
+            if i >= warmup_days:
+                steady["fulfilled"] += sold
+                steady["shortage"] += shortage
+                steady["holding"] += holding
+        total_shortage_cost = totals["shortage"] * shortage_cost
+        total_cost = totals["holding"] + total_shortage_cost + totals["ordering"]
+        steady_shortage_cost = steady["shortage"] * shortage_cost
+        steady_cost = steady["holding"] + steady_shortage_cost + steady["ordering"]
+        observed = float(actual.sum())
+        steady_actual = float(actual[warmup_days:].sum())
         rows.append({
-            "store_id":store,"product_id":product,"policy":quantile,
-            "observed_sales":float(actual.sum()),"units_fulfilled":total_sold,
-            "unfulfilled_observed_sales":total_shortage,
-            "fill_rate_pct":(total_sold/max(float(actual.sum()),1e-9))*100,
-            "orders_placed":total_orders,"units_ordered":total_ordered,
-            "ending_inventory":inventory,"holding_cost":total_holding,
-            "shortage_cost":total_shortage*shortage_cost,
-            "ordering_cost":total_ordering,"total_simulated_cost":total_cost,
+            "store_id": store, "product_id": product, "policy": policy_label,
+            "observed_sales": observed, "units_fulfilled": totals["fulfilled"],
+            "unfulfilled_observed_sales": totals["shortage"],
+            "fill_rate_pct": totals["fulfilled"] / max(observed, 1e-9) * 100,
+            "orders_placed": totals["orders_placed"], "units_ordered": totals["units_ordered"],
+            "orders_suppressed_at_horizon": totals["orders_suppressed"],
+            "units_suppressed_at_horizon": totals["units_suppressed"],
+            "ending_inventory": inventory, "holding_cost": totals["holding"],
+            "shortage_cost": total_shortage_cost, "ordering_cost": totals["ordering"],
+            "total_simulated_cost": total_cost, "warmup_days_excluded": warmup_days,
+            "steady_state_observed_sales": steady_actual,
+            "steady_state_fulfilled_units": steady["fulfilled"],
+            "steady_state_unfulfilled_units": steady["shortage"],
+            "steady_state_fill_rate_pct": steady["fulfilled"] / max(steady_actual, 1e-9) * 100,
+            "steady_state_orders_placed": steady["orders_placed"],
+            "steady_state_units_ordered": steady["units_ordered"],
+            "steady_state_holding_cost": steady["holding"],
+            "steady_state_shortage_cost": steady_shortage_cost,
+            "steady_state_ordering_cost": steady["ordering"],
+            "steady_state_total_cost": steady_cost,
         })
     return pd.DataFrame(rows)
 
@@ -121,7 +149,7 @@ def main():
         print("Downloading quantile predictions from R2")
         s3.download_file(bucket,"quantile-model-artifacts/evaluation_quantile_predictions.csv",str(src))
         df=pd.read_csv(src,parse_dates=["date"])
-        required={"date","store_id","product_id","actual_sale_amount","p50","p90_calibrated"}
+        required={"date","store_id","product_id","actual_sale_amount","p50","p90_calibrated","seasonal_naive_lag7"}
         missing=required-set(df.columns)
         if missing: raise ValueError(f"Prediction file missing columns: {sorted(missing)}")
         if df.duplicated(["store_id","product_id","date"]).any():
@@ -134,18 +162,24 @@ def main():
                 "holding_cost_per_unit_day":holding,"shortage_penalty_per_unit":shortage,
                 "ordering_cost_per_order":ordering,
                 "demand_proxy":"observed sale_amount; may be censored by stock availability",
-                "policy_definition":"order-up-to forecast sum over lead-time plus review protection period"}
+                "policy_definition":"order-up-to forecast sum over lead-time plus review protection period; orders placed only on scheduled review days",
+                "review_schedule":"day index modulo review period equals zero",
+                "warmup_days_excluded_from_steady_state":lead,
+                "horizon_rule":"orders that would arrive on or after the final evaluation day are suppressed and reported, not charged",
+                "benchmark":"seasonal naive forecast using leakage-safe sales_lag_7"}
         details=[]
-        for policy in ("p50","p90_calibrated"):
-            d=simulate(df,policy,lead,review,holding,shortage,ordering,initial)
+        policies=(("seasonal_naive_lag7","seasonal_naive_lag7"),
+                  ("p50","p50"),("p90_calibrated","p90_calibrated"))
+        for forecast_col, label in policies:
+            d=simulate(df,forecast_col,label,lead,review,holding,shortage,ordering,initial)
             details.append(d)
         detail=pd.concat(details,ignore_index=True)
         summaries=[aggregate(d, "base_cost_assumptions",params) for d in details]
         # One-way cost sensitivity: low/base/high shortage penalty, keeping other assumptions fixed.
         sensitivity=[]
         for multiplier,label in ((0.5,"shortage_penalty_low"),(1.0,"shortage_penalty_base"),(2.0,"shortage_penalty_high")):
-            for policy in ("p50","p90_calibrated"):
-                d=simulate(df,policy,lead,review,holding,shortage*multiplier,ordering,initial)
+            for forecast_col, policy_label in policies:
+                d=simulate(df,forecast_col,policy_label,lead,review,holding,shortage*multiplier,ordering,initial)
                 p={**params,"shortage_penalty_per_unit":shortage*multiplier}
                 sensitivity.append(aggregate(d,label,p))
         summary={"assumptions":params,"base_policy_comparison":summaries,
@@ -154,6 +188,9 @@ def main():
                     "Observed sales are a proxy for demand and may be censored during stockouts.",
                     "Starting stock, costs, lead time and order-up-to policy are user-configurable simulation assumptions.",
                     "The held-out prediction horizon is short; results are a controlled backtest, not measured operational savings.",
+                    "Steady-state metrics exclude the first lead-time days per series; full-horizon metrics retain cold-start effects.",
+                    "Orders that cannot arrive before the evaluation horizon ends are suppressed and counted separately.",
+                    "The seasonal-naive benchmark uses the lag-7 observed-sales feature available at each forecast date.",
                     "The simulator assumes deterministic lead time and does not model shelf life, capacity, pack sizes or supplier constraints."
                  ]}
         out=root/"inventory_simulation_summary.json"
