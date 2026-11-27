@@ -86,7 +86,10 @@ def predict_frame(model, frame, features, cats):
  if len(stored)!=len(active):
   raise RuntimeError(f"LightGBM categorical metadata mismatch: model={len(stored)} features={len(active)}")
  for col,levels in zip(active,stored):
-  x[col]=pd.Categorical(x[col].astype(str),categories=levels)
+  values=x[col].astype(str)
+  # Categories unseen during training are represented as missing at inference.
+  values=values.where(values.isin(levels),np.nan)
+  x[col]=pd.Categorical(values,categories=levels)
  return model.predict(x,num_iteration=model.best_iteration)
 
 def predict_specialist(tr,va,ev,features,cats,seg):
