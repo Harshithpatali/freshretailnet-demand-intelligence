@@ -1,0 +1,184 @@
+"""Streamlit view for the published wavelet benchmark artifacts."""
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+
+def render_wavelet_tab(api_base, get_json, metric, compact_table):
+    st.subheader("Wavelet research & benchmark")
+    st.caption(
+        "A same-row comparison of seasonal-naive lag-7, baseline LightGBM, "
+        "and wavelet-enhanced LightGBM. Metrics are computed on the published held-out evaluation rows."
+    )
+    try:
+        metrics = get_json("/api/v1/wavelet/metrics")
+        importance_payload = get_json("/api/v1/wavelet/feature-importance", {"limit": 2000})
+        prediction_payload = get_json("/api/v1/wavelet/predictions", {"limit": 10000})
+    except Exception as exc:
+        st.warning(
+            "Wavelet artifacts are not available through the API yet. Confirm that the "
+            "Wavelet Feature Experiment workflow uploaded its three files to R2, then redeploy "
+            "the API and refresh this page."
+        )
+        st.caption(f"Artifact/API detail: {exc}")
+        return
+
+    experiment = metrics.get("experiment", {})
+    validation = metrics.get("validation", {})
+    evaluation = metrics.get("evaluation", {})
+    comparisons = metrics.get("comparison", {})
+    model_keys = [
+        ("seasonal_naive_lag7", "Seasonal naive lag-7"),
+        ("lightgbm_same_rows", "LightGBM (same rows)"),
+        ("wavelet_lightgbm", "Wavelet LightGBM"),
+    ]
+
+    st.markdown("#### Evaluation model comparison")
+    rows = []
+    for key, label in model_keys:
+        values = evaluation.get(key, {})
+        rows.append({
+            "Model": label,
+            "MAE": values.get("mae"),
+            "RMSE": values.get("rmse"),
+            "WAPE (%)": values.get("wape_pct"),
+        })
+    comparison_df = pd.DataFrame(rows)
+    compact_table(comparison_df, 190)
+
+    base_col, wave_col = st.columns(2)
+    mae_change = comparisons.get("evaluation_mae_change_pct_vs_same_row_lightgbm")
+    wape_change = comparisons.get("evaluation_wape_change_pct_vs_same_row_lightgbm")
+    with base_col:
+        if mae_change is not None:
+            metric("Wavelet MAE change vs LightGBM", f"{mae_change:+.2f}%",
+                   "Negative means improvement; positive means degradation.")
+    with wave_col:
+        if wape_change is not None:
+            metric("Wavelet WAPE change vs LightGBM", f"{wape_change:+.2f}%",
+                   "Negative means improvement; positive means degradation.")
+
+    st.caption(
+        "Percentage change = (wavelet metric / same-row LightGBM metric − 1) × 100. "
+        "Negative values indicate improvement; positive values indicate degradation."
+    )
+    metric_rows = []
+    for split_name, split_data in (("Validation", validation), ("Evaluation", evaluation)):
+        for key, label in model_keys:
+            item = split_data.get(key, {})
+            metric_rows.append({
+                "Split": split_name, "Model": label,
+                "MAE": item.get("mae"), "RMSE": item.get("rmse"),
+                "WAPE (%)": item.get("wape_pct"),
+            })
+    st.markdown("#### Validation vs evaluation")
+    split_df = pd.DataFrame(metric_rows)
+    compact_table(split_df, 260)
+    if not split_df.empty:
+        selected_metric = st.selectbox("Metric chart", ["MAE", "RMSE", "WAPE (%)"], key="wavelet_metric_chart")
+        chart = px.bar(
+            split_df, x="Model", y=selected_metric, color="Split", barmode="group",
+            title=f"{selected_metric} by model and data split",
+        )
+        chart.update_layout(height=390, margin={"l": 15, "r": 15, "t": 55, "b": 20})
+        st.plotly_chart(chart, use_container_width=True)
+
+    st.markdown("#### Actual vs predicted — evaluation")
+    pred = pd.DataFrame(prediction_payload.get("rows", []))
+    if pred.empty:
+        st.info("No evaluation prediction rows were returned.")
+    else:
+        if {"store_id", "product_id"}.issubset(pred.columns):
+            pairs = pred[["store_id", "product_id"]].astype(str).drop_duplicates().sort_values(["store_id", "product_id"])
+            labels = [f"Store {r.store_id} · Product {r.product_id}" for r in pairs.itertuples(index=False)]
+            selected = st.selectbox("Store-product series", range(len(labels)),
+                                    format_func=lambda i: labels[i], key="wavelet_series")
+            pair = pairs.iloc[selected]
+            pred = pred[
+                (pred["store_id"].astype(str) == pair["store_id"])
+                & (pred["product_id"].astype(str) == pair["product_id"])
+            ]
+        if "date" in pred.columns:
+            pred["date"] = pd.to_datetime(pred["date"], errors="coerce")
+            pred = pred.sort_values("date")
+            x_col = "date"
+            x_title = "Date"
+        else:
+            pred = pred.reset_index(drop=True)
+            pred["evaluation_row"] = pred.index + 1
+            x_col = "evaluation_row"
+            x_title = "Evaluation row (legacy artifact; rerun workflow to publish dates)"
+            st.warning("This prediction artifact predates date and series identifiers. The chart uses row order until the experiment workflow is rerun.")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=pred[x_col], y=pred["actual_sale_amount"],
+                                 mode="lines", name="Actual observed sales"))
+        for col, label in (
+            ("seasonal_naive_lag7", "Seasonal naive lag-7"),
+            ("lightgbm_same_rows", "LightGBM (same rows)"),
+            ("wavelet_lightgbm", "Wavelet LightGBM"),
+        ):
+            if col in pred:
+                fig.add_trace(go.Scatter(x=pred[x_col], y=pred[col], mode="lines", name=label))
+        fig.update_layout(
+            title="Actual observed sales vs model predictions",
+            xaxis_title=x_title, yaxis_title="Observed sales units",
+            height=440, margin={"l": 15, "r": 15, "t": 55, "b": 20},
+            legend={"orientation": "h", "y": -0.25},
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(f"Showing {len(pred):,} evaluation rows from {prediction_payload.get('total', len(pred)):,} returned rows.")
+        st.download_button(
+            "Download evaluation predictions (CSV)", pred.to_csv(index=False),
+            "wavelet_evaluation_predictions.csv", "text/csv",
+        )
+
+    st.markdown("#### Wavelet feature importance")
+    importance = pd.DataFrame(importance_payload.get("rows", []))
+    if importance.empty:
+        st.info("No feature-importance rows were returned.")
+    else:
+        if "gain" in importance:
+            importance["gain"] = pd.to_numeric(importance["gain"], errors="coerce")
+            top = importance.sort_values("gain", ascending=False).head(25)
+            fig = px.bar(top.sort_values("gain"), x="gain", y="feature", orientation="h",
+                         title="Top 25 features by LightGBM gain")
+            fig.update_layout(height=650, xaxis_title="Split gain", yaxis_title="Feature",
+                              margin={"l": 15, "r": 15, "t": 55, "b": 20})
+            st.plotly_chart(fig, use_container_width=True)
+        wave_cols = experiment.get("features", [])
+        st.caption("Wavelet feature rows")
+        wave_rows = importance[importance["feature"].isin(wave_cols)].sort_values("gain", ascending=False)
+        if not wave_rows.empty:
+            compact_table(wave_rows, 240)
+        else:
+            st.info("The artifact does not contain rows matching the wavelet feature names in the experiment metadata.")
+        with st.expander("Full feature-importance table"):
+            compact_table(importance, 420)
+
+    st.markdown("#### Experiment configuration & reproducibility")
+    config = {
+        "wavelet": experiment.get("wavelet"),
+        "decomposition_level": experiment.get("decomposition_level"),
+        "history_window_days": experiment.get("history_window_days"),
+        "features": experiment.get("features", []),
+        "validation_period": experiment.get("validation_period"),
+        "evaluation_period": experiment.get("evaluation_period"),
+        "rows": experiment.get("rows"),
+        "base_feature_count": experiment.get("base_feature_count"),
+        "wavelet_feature_count": experiment.get("wavelet_feature_count"),
+        "best_iteration_same_row_lightgbm": experiment.get("best_iteration_same_row_lightgbm"),
+        "best_iteration_wavelet_lightgbm": experiment.get("best_iteration_wavelet_lightgbm"),
+        "target": experiment.get("target"),
+        "target_semantics": experiment.get("target_semantics"),
+        "fair_comparison": experiment.get("fair_comparison"),
+        "leakage_control": experiment.get("leakage_control"),
+        "limitations": experiment.get("limitations"),
+        "generated_at_utc": experiment.get("generated_at_utc"),
+    }
+    st.json(config)
+    st.warning(
+        "The target is observed sales, not necessarily uncensored demand. Wavelet features use only "
+        "the preceding 32 observations; they cannot recover demand hidden by stockouts. "
+        "A lower evaluation error is evidence of predictive improvement, not proof of inventory savings."
+    )
