@@ -150,7 +150,7 @@ def main():
      ps,it=fit_reg(tr_s,va_s,ev_s,allfeat,cats,objective="huber"); strategy="huber_regression"
     else:
      ps,it=fit_reg(tr_s,va_s,ev_s,allfeat,cats); strategy="segment_lightgbm"
-    pcal[ev.index.get_indexer(ev_s.index)]=ps
+    # ev_s retains original dataframe index labels; use a positional boolean mask\n    # over ev to route specialist predictions to the correct evaluation rows.\n    route_mask=ev["demand_segment"].eq(seg).to_numpy()\n    if int(route_mask.sum()) != len(ps): raise RuntimeError(f"Specialist routing mismatch for {seg}: mask={route_mask.sum()} predictions={len(ps)}")\n    pcal[route_mask]=ps
     strategy_reports[seg]={"strategy":strategy,"train_rows":len(tr_s),"validation_rows":len(va_s),"eval_rows":len(ev_s),"best_iteration":it}
    # pcal now holds routed segment-specialist predictions where enough data existed.
    model_preds["calendar_plus_segment_specialists"]=pcal
