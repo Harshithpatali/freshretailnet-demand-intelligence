@@ -123,7 +123,7 @@ def main():
         root=Path(td); raw={}
         for split,key in RAW.items():
             path=root/f"{split}.parquet"; print(f"Downloading {key}"); s3.download_file(bucket,key,str(path)); raw[split]=pl.read_parquet(path)
-        combined=pl.concat([raw["train"],raw["eval"]],how="vertical_relaxed)
+        combined=pl.concat([raw["train"],raw["eval"]],how="vertical_relaxed")
         base=load_features_from_frame(combined)
         frame=add_engineered_features(base)
         frame=frame.sort(GROUP+["date"])
@@ -175,9 +175,9 @@ def main():
                 for idx,(_,row) in enumerate(ev.iterrows()):
                     prediction_rows.append({"fold":fold_no,"date":row.date.date().isoformat(),"store_id":str(row.store_id),
                         "product_id":str(row.product_id),"actual":float(row.sale_amount),"model":model_name,"prediction":float(pred[idx])})
-            fold_reports.append({"fold":fold_no,"train_start":str(min(tr_dates).date()),"train_end":str(max(tr_dates).date()),
-                "validation_start":str(min(va_dates).date()),"validation_end":str(max(va_dates).date()),
-                "evaluation_start":str(min(ev_dates).date()),"evaluation_end":str(max(ev_dates).date()),
+            fold_reports.append({"fold":fold_no,"train_start":str(pd.Timestamp(min(tr_dates)).date()),"train_end":str(pd.Timestamp(max(tr_dates)).date()),
+                "validation_start":str(pd.Timestamp(min(va_dates)).date()),"validation_end":str(pd.Timestamp(max(va_dates)).date()),
+                "evaluation_start":str(pd.Timestamp(min(ev_dates)).date()),"evaluation_end":str(pd.Timestamp(max(ev_dates)).date()),
                 "best_hyperparameters":best_params,"baseline_feature_count":len(base_cols),
                 "selected_feature_count":len(selected),"removed_engineered_features":[c for c in engineered if c not in selected],
                 "validation_tuning_mae":float(min(tune,key=lambda x:x[0])[0])})
