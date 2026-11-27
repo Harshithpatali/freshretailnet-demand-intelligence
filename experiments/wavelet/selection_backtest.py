@@ -4,7 +4,7 @@ Uses causal features only. Three latest non-overlapping 7-day evaluation windows
 each preceded by a 14-day validation window. Results are written to Cloudflare R2.
 """
 from __future__ import annotations
-import json, tempfile, sys
+import json, tempfile, sys, re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import boto3, lightgbm as lgb, numpy as np, pandas as pd, polars as pl
@@ -146,7 +146,9 @@ def main():
         all_pd=frame.to_pandas(); all_pd["date"]=pd.to_datetime(all_pd["date"])
         base_cols=[c for c in all_pd.columns if c not in ("sale_amount","date") and not c.startswith("wv_")]
         cats=[c for c in ("city_id","store_id","management_group_id","first_category_id","second_category_id","third_category_id","product_id","day_of_week","month") if c in base_cols]
-        wave_cols={s:[c for c in all_pd.columns if c.startswith(f"wv_{s}_")] for s in SIGNALS}
+        wave_cols={s:[c for c in all_pd.columns if re.fullmatch(
+            rf"wv_{re.escape(s)}_(approx_energy|detail_energy|entropy|detail_to_approx|smooth_mean)", c
+        )] for s in SIGNALS}
         folds=date_folds(all_pd.date.unique(),n=3,horizon=7,validation=14)
         if len(folds)<3: raise RuntimeError(f"Need three complete rolling folds; found {len(folds)}")
         prediction_rows=[]; fold_reports=[]; feature_gain={}
