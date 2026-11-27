@@ -125,7 +125,7 @@ def main():
    tr=pdf[pdf.target_date.isin(td)].copy(); va=pdf[pdf.target_date.isin(vd)].copy(); ev=pdf[pdf.target_date.isin(ed)].copy()
    excluded={"target","target_date","origin_date","date","sale_amount","dt","hours_sale","hours_stock_status"}
    allfeat=[c for c in pdf.columns if c not in excluded and not c.startswith("hours_")]
-   basefeat=[c for c in allfeat if c not in calcols]
+   basefeat=[c for c in allfeat if c not in calcols and c not in {"demand_adi_56","demand_cv2_56","demand_segment"}]
    cats=[c for c in ["city_id","store_id","management_group_id","first_category_id","second_category_id","third_category_id","product_id","day_of_week","month","demand_segment","target_day_of_week","target_month"] if c in allfeat]
    # Current LightGBM baseline: same horizon rows/splits, standard features, no target-date calendar flags.
    pbase,itbase=fit_reg(tr,va,ev,basefeat,cats)
