@@ -138,6 +138,7 @@ def main():
         pd.DataFrame({"date":e["date"].astype(str),"store_id":e["store_id"],"product_id":e["product_id"],
                       "actual_sale_amount":ye.to_numpy(),"p10":ep[.10],"p50":ep[.50],"p90":ep[.90],
                       "p10_calibrated":eval_lo,"p90_calibrated":eval_hi,
+                      "seasonal_naive_lag7":np.maximum(e["sales_lag_7"].to_numpy(dtype=float),0),
                       "stock_hour6_22_cnt":e["stock_hour6_22_cnt"].to_numpy()}).to_csv(pf,index=False)
         for f in paths+[mf,pf]:
             key=f"quantile-model-artifacts/{f.name}"
