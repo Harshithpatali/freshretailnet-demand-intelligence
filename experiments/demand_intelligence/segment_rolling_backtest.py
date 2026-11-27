@@ -1,7 +1,7 @@
 """Multi-window rolling backtest with validation-gated demand-segment specialists.
 
 Each fold is strictly chronological: expanding train -> 7-day validation ->
-7-day test. For each horizon and segment, a specialist is routed into the test
+horizon-adaptive test window. For each horizon and segment, a specialist is routed into the test
 predictions only when its validation MAE beats the production LightGBM baseline
 by the configured margin. Test outcomes never influence routing decisions.
 """
@@ -22,6 +22,7 @@ FOLDS=3
 BLOCK_DAYS=7
 MIN_VALIDATION_GAIN_PCT=0.5
 MIN_TRAIN_DATES=56
+MIN_HURDLE_VALIDATION_POSITIVES=20
 SEED=20261202
 PARAMS={"learning_rate":0.04,"num_leaves":63,"min_data_in_leaf":150,
  "feature_fraction":0.85,"bagging_fraction":0.85,"bagging_freq":1,
@@ -96,8 +97,13 @@ def predict_specialist(tr,va,ev,features,cats,seg):
  if seg in ("lumpy","intermittent"):
   cls=fit_model(tr,va,features,cats,binary=True)
   pos=tr[tr.target>0]
-  if len(pos)<100: return np.zeros(len(ev))
-  reg=fit_model(pos,va[va.target>0] if (va.target>0).sum()>=20 else pos,features,cats)
+  pos_va=va[va.target>0]
+  if len(pos)<100 or len(pos_va)<MIN_HURDLE_VALIDATION_POSITIVES:
+   raise RuntimeError(
+    f"Insufficient hurdle-regression examples: train_positive={len(pos)}, "
+    f"validation_positive={len(pos_va)}"
+   )
+  reg=fit_model(pos,pos_va,features,cats)
   return np.maximum(predict_frame(cls,ev,features,cats),0)*np.maximum(predict_frame(reg,ev,features,cats),0)
  model=fit_model(tr,va,features,cats,objective="huber" if seg=="erratic" else "regression")
  return np.maximum(predict_frame(model,ev,features,cats),0)
@@ -134,7 +140,7 @@ def main():
     (2*np.pi*pl.col("target_date").dt.weekday()/7).cos().alias("target_dow_cos")])
    pdf=hf.to_pandas(); pdf["target_date"]=pd.to_datetime(pdf.target_date)
    dates=sorted(pdf.target_date.dt.normalize().unique())
-   # Reserve the latest 3 disjoint 7-day blocks as test windows; each has its own
+   # Reserve the latest three disjoint test windows; each has its own
    # immediately preceding 7-day validation block and expanding historical train.
    # Keep three disjoint test folds, shrinking each test block when the
    # horizon shift leaves fewer dates. Training and validation lengths stay fixed.
@@ -177,6 +183,11 @@ def main():
      tr_s=tr[tr.demand_segment==seg]; va_s=va[va.demand_segment==seg]; ev_s=ev[ev.demand_segment==seg]
      if len(tr_s)<300 or len(va_s)<30 or len(ev_s)==0:
       selection_rows.append({"horizon_days":h,"fold":fi,"segment":seg,"selected":False,"reason":"insufficient segment sample"})
+      continue
+     if seg in ("lumpy","intermittent") and int((va_s.target>0).sum())<MIN_HURDLE_VALIDATION_POSITIVES:
+      selection_rows.append({"horizon_days":h,"fold":fi,"segment":seg,"selected":False,
+       "reason":"insufficient positive validation rows for hurdle regressor",
+       "validation_positive_rows":int((va_s.target>0).sum())})
       continue
      # Baseline segment score and challenger validation score are calculated on the same rows.
      bval=np.maximum(predict_frame(baseline,va_s,basefeat,cats),0)
@@ -241,7 +252,7 @@ def main():
    "fold_audit":audits,"selection_details":selection_rows,
    "segment_strategy":{"smooth":"LightGBM regression","erratic":"Huber LightGBM","lumpy":"occurrence classifier x positive-size regressor","intermittent":"occurrence classifier x positive-size regressor"},
    "calendar_features":target_cal_cols,"calendar_policy":"Only explicitly named target-date calendar flags are specialist-only; original origin-date flags remain in the production baseline. Verify target flags are available before forecast time.",
-   "caveats":"Backtest uses the latest three disjoint 7-day windows available in the combined historical dataset. Confirm stability on a later live period before production promotion.",
+   "caveats":"Backtest uses the latest three disjoint horizon-adaptive test windows available in the combined historical dataset; each horizon's effective test length is recorded in fold_design. Hurdle specialists are not eligible in folds with fewer than the configured number of positive validation rows. Confirm stability on a later live period before production promotion.",
    "generated_at_utc":datetime.now(timezone.utc).isoformat()}
   outputs={"segment_rolling_backtest_report.json":report,"segment_rolling_backtest_folds.csv":fdf,
    "segment_rolling_backtest_selection.csv":sdf,"segment_rolling_backtest_predictions.csv":pdf}
