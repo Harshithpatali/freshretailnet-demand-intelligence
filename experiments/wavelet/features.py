@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pywt
 
-WAVELET = "db4"
+WAVELET = "db2"
 LEVEL = 2
 WINDOW = 32
 
@@ -36,7 +36,7 @@ def build_wavelet_features(frame: pd.DataFrame) -> pd.DataFrame:
         ["store_id", "product_id"], sort=False, observed=True
     ):
         sales = group["sale_amount"].to_numpy(dtype=np.float64, copy=False)
-        dates = group["date"].to_numpy()
+        dates = group["date"].to_numpy(dtype="datetime64[D]")
         if len(sales) <= WINDOW:
             continue
 
@@ -74,7 +74,7 @@ def build_wavelet_features(frame: pd.DataFrame) -> pd.DataFrame:
             ).assign(
                 store_id=store_id,
                 product_id=product_id,
-                date=dates[WINDOW:],
+                date=pd.to_datetime(dates[WINDOW:]).date,
             )
         )
 
