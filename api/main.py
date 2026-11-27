@@ -123,3 +123,7 @@ def filters():
 @app.get("/api/v1/model-metrics")
 def model_metrics():
     return _safe_json("model-artifacts/metrics.json")
+
+@app.get("/api/v1/sql-eda")
+def sql_eda():
+    return _safe_json("sql-eda/sql_eda_results.json")
