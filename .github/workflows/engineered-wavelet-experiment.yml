@@ -1,0 +1,33 @@
+name: Engineered Features + Wavelet Experiment
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "experiments/wavelet/engineered_pipeline.py"
+      - ".github/workflows/engineered-wavelet-experiment.yml"
+      - "src/train_model.py"
+
+permissions:
+  contents: read
+
+jobs:
+  engineered-wavelet-experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install experiment dependencies
+        run: python -m pip install --upgrade boto3 polars pyarrow pandas numpy scikit-learn lightgbm PyWavelets
+      - name: Compile experiment pipeline
+        run: python -m py_compile experiments/wavelet/engineered_pipeline.py
+      - name: Run engineered feature and wavelet comparison
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python experiments/wavelet/engineered_pipeline.py
