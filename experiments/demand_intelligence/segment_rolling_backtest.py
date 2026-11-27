@@ -111,9 +111,15 @@ def main():
    s3.download_file(bucket,key,str(p)); raw[split]=pl.read_parquet(p)
   combined=pl.concat([raw["train"],raw["eval"]],how="diagonal_relaxed").sort(GROUP+["dt"])
   frame=add_segments(load_features_from_frame(combined))
+  # Keep origin-date calendar fields intact for production-baseline parity.
+  # Target-date fields get explicit names so they cannot collide with origin features.
   calcols=[c for c in ["holiday_flag","activity_flag"] if c in combined.columns]
+  target_cal_cols=[f"target_{c}" for c in calcols]
   if calcols:
-   cal=combined.select([pl.col("dt").str.to_date(strict=False).alias("target_date")]+[pl.col(c) for c in calcols]).unique(subset=["target_date"])
+   cal=combined.select(
+    [pl.col("dt").str.to_date(strict=False).alias("target_date")]+
+    [pl.col(c).alias(f"target_{c}") for c in calcols]
+   ).unique(subset=["target_date"])
   audits=[]; fold_rows=[]; selection_rows=[]; prediction_rows=[]
   for h in HORIZONS:
    hf=frame.sort(GROUP+["date"]).with_columns([
@@ -159,7 +165,7 @@ def main():
     ev=pdf[pdf.target_date.dt.normalize().isin(ed)].copy()
     excluded={"target","target_date","date","sale_amount","dt","hours_sale","hours_stock_status","origin_date"}
     allfeat=[c for c in pdf.columns if c not in excluded and not c.startswith("hours_")]
-    exp_only=set(calcols)|{"demand_adi_56","demand_cv2_56","demand_segment","target_day_of_week","target_day_of_month","target_month","target_dow_sin","target_dow_cos"}
+    exp_only=set(target_cal_cols)|{"demand_adi_56","demand_cv2_56","demand_segment","target_day_of_week","target_day_of_month","target_month","target_dow_sin","target_dow_cos"}
     basefeat=[c for c in allfeat if c not in exp_only]
     cats=[c for c in ["city_id","store_id","management_group_id","first_category_id","second_category_id","third_category_id","product_id","day_of_week","month","demand_segment","target_day_of_week","target_month"] if c in allfeat]
     baseline=fit_model(tr,va,basefeat,cats)
@@ -234,7 +240,7 @@ def main():
    "pooled_test_metrics":pooled,"fold_test_metrics":fold_rows,"selection_diagnostics":stability,
    "fold_audit":audits,"selection_details":selection_rows,
    "segment_strategy":{"smooth":"LightGBM regression","erratic":"Huber LightGBM","lumpy":"occurrence classifier x positive-size regressor","intermittent":"occurrence classifier x positive-size regressor"},
-   "calendar_features":calcols,"calendar_policy":"Only target-date calendar flags from raw calendar rows are used by specialists; verify operational availability before forecast time.",
+   "calendar_features":target_cal_cols,"calendar_policy":"Only explicitly named target-date calendar flags are specialist-only; original origin-date flags remain in the production baseline. Verify target flags are available before forecast time.",
    "caveats":"Backtest uses the latest three disjoint 7-day windows available in the combined historical dataset. Confirm stability on a later live period before production promotion.",
    "generated_at_utc":datetime.now(timezone.utc).isoformat()}
   outputs={"segment_rolling_backtest_report.json":report,"segment_rolling_backtest_folds.csv":fdf,
