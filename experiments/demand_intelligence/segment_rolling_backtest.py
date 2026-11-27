@@ -79,14 +79,24 @@ def fit_model(tr,va,features,cats,objective="regression_l1",binary=False):
   callbacks=[lgb.early_stopping(70,verbose=False)])
  return model
 
+def predict_frame(model, frame, features, cats):
+ x=frame[features].copy()
+ active=[c for c in cats if c in features]
+ stored=model.pandas_categorical or []
+ if len(stored)!=len(active):
+  raise RuntimeError(f"LightGBM categorical metadata mismatch: model={len(stored)} features={len(active)}")
+ for col,levels in zip(active,stored):
+  x[col]=pd.Categorical(x[col].astype(str),categories=levels)
+ return model.predict(x,num_iteration=model.best_iteration)
+
 def predict_specialist(tr,va,ev,features,cats,seg):
  if seg in ("lumpy","intermittent"):
   cls=fit_model(tr,va,features,cats,binary=True)
   pos=tr[tr.target>0]
   if len(pos)<100: return np.zeros(len(ev))
   reg=fit_model(pos,va[va.target>0] if (va.target>0).sum()>=20 else pos,features,cats)
-  return np.maximum(cls.predict(ev[features],num_iteration=cls.best_iteration),0)*np.maximum(reg.predict(ev[features],num_iteration=reg.best_iteration),0)
- return np.maximum(fit_model(tr,va,features,cats,objective="huber" if seg=="erratic" else "regression").predict(ev[features]),0)
+  return np.maximum(predict_frame(cls,ev,features,cats),0)*np.maximum(predict_frame(reg,ev,features,cats),0)
+ model=fit_model(tr,va,features,cats,objective="huber" if seg=="erratic" else "regression")\n return np.maximum(predict_frame(model,ev,features,cats),0)
 
 def main():
  s3,bucket=client(),env("R2_BUCKET")
@@ -131,7 +141,7 @@ def main():
     basefeat=[c for c in allfeat if c not in exp_only]
     cats=[c for c in ["city_id","store_id","management_group_id","first_category_id","second_category_id","third_category_id","product_id","day_of_week","month","demand_segment","target_day_of_week","target_month"] if c in allfeat]
     baseline=fit_model(tr,va,basefeat,cats)
-    pb=np.maximum(baseline.predict(ev[basefeat],num_iteration=baseline.best_iteration),0)
+    pb=np.maximum(predict_frame(baseline,ev,basefeat,cats),0)
     # Fit each specialist once per fold, evaluate on validation for routing, then
     # apply the already-decided route to the untouched test block.
     routed=pb.copy()
@@ -141,7 +151,7 @@ def main():
       selection_rows.append({"horizon_days":h,"fold":fi,"segment":seg,"selected":False,"reason":"insufficient segment sample"})
       continue
      # Baseline segment score and challenger validation score are calculated on the same rows.
-     bval=np.maximum(baseline.predict(va_s[basefeat],num_iteration=baseline.best_iteration),0)
+     bval=np.maximum(predict_frame(baseline,va_s,basefeat,cats),0)
      sp_val=predict_specialist(tr_s,va_s,va_s,allfeat,cats,seg)
      bmae=score(va_s.target,bval)["mae"]; smae=score(va_s.target,sp_val)["mae"]
      gain=100*(bmae-smae)/max(bmae,1e-9)
