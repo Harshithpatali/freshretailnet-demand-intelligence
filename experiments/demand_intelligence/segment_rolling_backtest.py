@@ -127,15 +127,16 @@ def main():
   target_cal_cols=[f"target_{c}" for c in calcols]
   if calcols:
    cal=combined.select(
+    [pl.col(c) for c in GROUP]+
     [pl.col("dt").str.to_date(strict=False).alias("target_date")]+
     [pl.col(c).alias(f"target_{c}") for c in calcols]
-   ).unique(subset=["target_date"])
+   ).unique(subset=GROUP+["target_date"])
   audits=[]; fold_rows=[]; selection_rows=[]; prediction_rows=[]
   for h in HORIZONS:
    hf=frame.sort(GROUP+["date"]).with_columns([
     pl.col("sale_amount").shift(-h).over(GROUP).alias("target"),
     pl.col("date").shift(-h).over(GROUP).alias("target_date")]).drop_nulls(["target","target_date"])
-   if calcols: hf=hf.join(cal,on="target_date",how="left")
+   if calcols: hf=hf.join(cal,on=GROUP+["target_date"],how="left")
    hf=hf.with_columns([
     pl.col("target_date").dt.weekday().alias("target_day_of_week"),
     pl.col("target_date").dt.day().alias("target_day_of_month"),
