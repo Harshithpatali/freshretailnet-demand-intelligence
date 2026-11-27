@@ -136,6 +136,14 @@ def main():
    hf=frame.sort(GROUP+["date"]).with_columns([
     pl.col("sale_amount").shift(-h).over(GROUP).alias("target"),
     pl.col("date").shift(-h).over(GROUP).alias("target_date")]).drop_nulls(["target","target_date"])
+   rows_before_gap_check=hf.height
+   # A row shift is only an h-day horizon when the entity's target date is
+   # exactly h calendar days ahead. Exclude irregular gaps rather than mislabel them.
+   hf=hf.filter((pl.col("target_date")-pl.col("date")).dt.total_days()==h)
+   dropped_gap_rows=rows_before_gap_check-hf.height
+   print(f"h={h}: excluded {dropped_gap_rows:,} rows with non-{h}-day target gaps")
+   if hf.is_empty():
+    raise RuntimeError(f"h={h}: no exact {h}-calendar-day target pairs remain")
    if calcols: hf=hf.join(cal,on=GROUP+["target_date"],how="left")
    hf=hf.with_columns([
     pl.col("target_date").dt.weekday().alias("target_day_of_week"),
