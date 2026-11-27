@@ -10,12 +10,14 @@ LEVEL = 2
 WINDOW = 32
 
 
-def build_wavelet_features(frame: pd.DataFrame) -> pd.DataFrame:
+def build_wavelet_features(frame: pd.DataFrame, wavelet_name: str = WAVELET) -> pd.DataFrame:
     """Create features for date t using only the 32 observed sales before t.
 
     The first 32 observations per store-product series have no wavelet features.
     A fixed window and periodization mode make coefficient shapes consistent.
     """
+    if wavelet_name not in {"db2", "db4", "sym4", "coif1"}:
+        raise ValueError(f"Unsupported wavelet family: {wavelet_name}")
     required = {"store_id", "product_id", "date", "sale_amount"}
     missing = required - set(frame.columns)
     if missing:
@@ -47,7 +49,7 @@ def build_wavelet_features(frame: pd.DataFrame) -> pd.DataFrame:
         )[:-1]
         # windows[k] covers sales[k:k+32], and predicts date index k+32.
         coeffs = pywt.wavedec(
-            windows, WAVELET, mode="periodization", level=LEVEL, axis=1
+            windows, wavelet_name, mode="periodization", level=LEVEL, axis=1
         )
         approx, detail2, detail1 = coeffs
         energies = [
