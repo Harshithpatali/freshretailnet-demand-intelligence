@@ -96,7 +96,8 @@ def predict_specialist(tr,va,ev,features,cats,seg):
   if len(pos)<100: return np.zeros(len(ev))
   reg=fit_model(pos,va[va.target>0] if (va.target>0).sum()>=20 else pos,features,cats)
   return np.maximum(predict_frame(cls,ev,features,cats),0)*np.maximum(predict_frame(reg,ev,features,cats),0)
- model=fit_model(tr,va,features,cats,objective="huber" if seg=="erratic" else "regression")\n return np.maximum(predict_frame(model,ev,features,cats),0)
+ model=fit_model(tr,va,features,cats,objective="huber" if seg=="erratic" else "regression")
+ return np.maximum(predict_frame(model,ev,features,cats),0)
 
 def main():
  s3,bucket=client(),env("R2_BUCKET")
