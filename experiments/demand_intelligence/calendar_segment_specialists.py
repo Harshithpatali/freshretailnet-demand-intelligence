@@ -129,13 +129,22 @@ def main():
    tr=pdf[pdf.target_date.isin(td)].copy(); va=pdf[pdf.target_date.isin(vd)].copy(); ev=pdf[pdf.target_date.isin(ed)].copy()
    excluded={"target","target_date","origin_date","date","sale_amount","dt","hours_sale","hours_stock_status"}
    allfeat=[c for c in pdf.columns if c not in excluded and not c.startswith("hours_")]
-   basefeat=[c for c in allfeat if c not in calcols and c not in {"demand_adi_56","demand_cv2_56","demand_segment"}]
+   # Match the existing production feature set: exclude every feature introduced
+   # specifically for this experiment from the baseline, including target-date
+   # calendar encodings and demand-segmentation statistics.
+   experiment_only=set(calcols)|{"demand_adi_56","demand_cv2_56","demand_segment",
+    "target_day_of_week","target_day_of_month","target_month","target_dow_sin","target_dow_cos"}
+   basefeat=[c for c in allfeat if c not in experiment_only]
    cats=[c for c in ["city_id","store_id","management_group_id","first_category_id","second_category_id","third_category_id","product_id","day_of_week","month","demand_segment","target_day_of_week","target_month"] if c in allfeat]
    # Current LightGBM baseline: same horizon rows/splits, standard features, no target-date calendar flags.
    pbase,itbase=fit_reg(tr,va,ev,basefeat,cats)
    # Calendar enhanced global model: all products, future-known holiday/activity.
    pcal,itcal=fit_reg(tr,va,ev,allfeat,cats)
-   model_preds={"current_lightgbm_baseline":pbase,"calendar_enhanced_global":pcal}
+   # Keep independent arrays: specialist routing must never mutate the global
+   # calendar model's predictions through a shared NumPy reference.
+   pglobal=pcal.copy()
+   pspecial=pcal.copy()
+   model_preds={"current_lightgbm_baseline":pbase,"calendar_enhanced_global":pglobal}
    strategy_reports={}
    # Specialist strategies for each segment; intermittent uses hurdle as well as lumpy.
    for seg in ["smooth","erratic","lumpy","intermittent"]:
@@ -150,18 +159,23 @@ def main():
      ps,it=fit_reg(tr_s,va_s,ev_s,allfeat,cats,objective="huber"); strategy="huber_regression"
     else:
      ps,it=fit_reg(tr_s,va_s,ev_s,allfeat,cats); strategy="segment_lightgbm"
-    # ev_s retains original dataframe index labels; use a positional boolean mask\n    # over ev to route specialist predictions to the correct evaluation rows.\n    route_mask=ev["demand_segment"].eq(seg).to_numpy()\n    if int(route_mask.sum()) != len(ps): raise RuntimeError(f"Specialist routing mismatch for {seg}: mask={route_mask.sum()} predictions={len(ps)}")\n    pcal[route_mask]=ps
+    # Route by positional mask; ev_s preserves the same row order as this mask.
+    route_mask=ev["demand_segment"].eq(seg).to_numpy()
+    if int(route_mask.sum()) != len(ps):
+     raise RuntimeError(f"Specialist routing mismatch for {seg}: mask={route_mask.sum()} predictions={len(ps)}")
+    pspecial[route_mask]=ps
     strategy_reports[seg]={"strategy":strategy,"train_rows":len(tr_s),"validation_rows":len(va_s),"eval_rows":len(ev_s),"best_iteration":it}
-   # pcal now holds routed segment-specialist predictions where enough data existed.
-   model_preds["calendar_plus_segment_specialists"]=pcal
+   # Global calendar predictions remain untouched; specialists form a separate challenger.
+   model_preds["calendar_plus_segment_specialists"]=pspecial
    for name,pred in model_preds.items():
     results.append({"horizon_days":h,"model":name,**metrics(ev.target,pred)})
     for i,(_,row) in enumerate(ev.iterrows()):
      pred_rows.append({"horizon_days":h,"target_date":row.target_date.date().isoformat(),"origin_date":row.origin_date.date().isoformat(),
       "store_id":str(row.store_id),"product_id":str(row.product_id),"actual":float(row.target),"model":name,
       "prediction":float(pred[i]),"demand_segment":str(row.demand_segment)})
-   for seg,g in ev.assign(prediction=model_preds["calendar_plus_segment_specialists"]).groupby("demand_segment"):
-    segment_rows.append({"horizon_days":h,"model":"calendar_plus_segment_specialists","demand_segment":seg,"rows":len(g),**metrics(g.target,g.prediction)})
+   for name in ["current_lightgbm_baseline","calendar_enhanced_global","calendar_plus_segment_specialists"]:
+    for seg,g in ev.assign(prediction=model_preds[name]).groupby("demand_segment"):
+     segment_rows.append({"horizon_days":h,"model":name,"demand_segment":seg,"rows":len(g),**metrics(g.target,g.prediction)})
    audit.append({"horizon":h,"status":"completed","train_rows":len(tr),"validation_rows":len(va),"evaluation_rows":len(ev),
     "train_dates":len(td),"validation_dates":len(vd),"evaluation_dates":len(ed),"evaluation_start":str(ed[0].date()),"evaluation_end":str(ed[-1].date()),
     "calendar_columns_used":calcols,"holiday_activity_source":"raw target-date calendar row; future-known flags only",
