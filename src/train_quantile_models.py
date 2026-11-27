@@ -53,6 +53,19 @@ def metrics(y,p):
       "quantile_crossing_rate_pct":float(((p[.10]>p[.50])|(p[.50]>p[.90])).mean()*100),
       "median_mae":float(np.abs(y-p[.50]).mean()),
       "median_wape_pct":float(np.abs(y-p[.50]).sum()/max(np.abs(y).sum(),1e-9)*100)}
+def conformal_adjustment(y,lower,upper,coverage=.80):
+    """Finite-sample split conformal adjustment using validation residual scores."""
+    y=np.asarray(y); lower=np.asarray(lower); upper=np.asarray(upper)
+    scores=np.maximum(lower-y,y-upper)
+    rank=min(len(scores),int(np.ceil((len(scores)+1)*coverage)))
+    return float(np.sort(scores)[rank-1])
+def calibrated_interval(y,p,qhat):
+    lower=np.maximum(0,p[.10]-qhat)
+    upper=np.maximum(lower,p[.90]+qhat)
+    y=np.asarray(y)
+    return {"coverage_pct":float(((y>=lower)&(y<=upper)).mean()*100),
+            "mean_width":float((upper-lower).mean()),
+            "adjustment":float(qhat)},lower,upper
 def strata(frame,p):
     z=pd.DataFrame({"exposure":frame.stock_hour6_22_cnt.to_numpy(),"actual":frame.sale_amount.to_numpy(),
                     "p10":p[.10],"p90":p[.90]})
@@ -97,7 +110,17 @@ def main():
             models[q]=m; vp[q]=np.maximum(m.predict(Xv,num_iteration=m.best_iteration),0)
             ep[q]=np.maximum(m.predict(Xe,num_iteration=m.best_iteration),0)
             f=root/f"lightgbm_{name}.txt"; m.save_model(str(f)); paths.append(f)
+        qhat=conformal_adjustment(yv,vp[.10],vp[.90],coverage=.80)
+        val_cal,val_lo,val_hi=calibrated_interval(yv,vp,qhat)
+        eval_cal,eval_lo,eval_hi=calibrated_interval(ye,ep,qhat)
+        calibrated_ep={.10:eval_lo,.50:ep[.50],.90:eval_hi}
         result={"validation":metrics(yv,vp),"evaluation":metrics(ye,ep),
+          "conformal_calibration":{"method":"split conformalized quantile regression",
+            "nominal_coverage_pct":80.0,"validation_adjustment":qhat,
+            "validation_calibrated_interval":val_cal,
+            "evaluation_calibrated_interval":eval_cal,
+            "caveat":"Calibration is estimated on a prior time window; temporal distribution shift can invalidate nominal future coverage."},
+          "evaluation_calibrated_stockout_exposure_strata":strata(e,calibrated_ep),
           "evaluation_stockout_exposure_strata":strata(e,ep),
           "validation_period":{"start":str(min(vd)),"end":str(max(vd))},
           "evaluation_period":{"start":str(ev.get_column("date").min()),"end":str(ev.get_column("date").max())},
@@ -112,6 +135,7 @@ def main():
         mf=root/"quantile_metrics.json"; mf.write_text(json.dumps(result,indent=2,default=str))
         pf=root/"evaluation_quantile_predictions.csv"
         pd.DataFrame({"actual_sale_amount":ye.to_numpy(),"p10":ep[.10],"p50":ep[.50],"p90":ep[.90],
+                      "p10_calibrated":eval_lo,"p90_calibrated":eval_hi,
                       "stock_hour6_22_cnt":e.stock_hour6_22_cnt.to_numpy()}).to_csv(pf,index=False)
         for f in paths+[mf,pf]:
             key=f"quantile-model-artifacts/{f.name}"
