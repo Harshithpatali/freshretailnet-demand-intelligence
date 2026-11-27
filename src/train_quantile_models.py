@@ -100,7 +100,7 @@ def main():
         result={"validation":metrics(yv,vp),"evaluation":metrics(ye,ep),
           "evaluation_stockout_exposure_strata":strata(e,ep),
           "validation_period":{"start":str(min(vd)),"end":str(max(vd))},
-          "evaluation_period":{"start":str(ev.date.min()),"end":str(ev.date.max())},
+          "evaluation_period":{"start":str(ev.get_column("date").min()),"end":str(ev.get_column("date").max())},
           "rows":{"train":len(a),"validation":len(v),"evaluation":len(e)},
           "best_iterations":{f"p{int(q*100)}":int(models[q].best_iteration) for q in QUANTILES},
           "features":feats,"categorical_features":cats,"quantiles":list(QUANTILES),
