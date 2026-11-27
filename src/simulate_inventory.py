@@ -128,6 +128,19 @@ def aggregate(detail, label, params):
         "shortage_cost":float(sums["shortage_cost"]),
         "ordering_cost":float(sums["ordering_cost"]),
         "total_simulated_cost":float(sums["total_simulated_cost"]),
+        "orders_suppressed_at_horizon":int(detail["orders_suppressed_at_horizon"].sum()),
+        "units_suppressed_at_horizon":float(detail["units_suppressed_at_horizon"].sum()),
+        "steady_state_observed_sales_proxy_units":float(detail["steady_state_observed_sales"].sum()),
+        "steady_state_fulfilled_units":float(detail["steady_state_fulfilled_units"].sum()),
+        "steady_state_unfulfilled_units":float(detail["steady_state_unfulfilled_units"].sum()),
+        "steady_state_fill_rate_pct":float(detail["steady_state_fulfilled_units"].sum() /
+            max(detail["steady_state_observed_sales"].sum(),1e-9)*100),
+        "steady_state_orders_placed":int(detail["steady_state_orders_placed"].sum()),
+        "steady_state_units_ordered":float(detail["steady_state_units_ordered"].sum()),
+        "steady_state_holding_cost":float(detail["steady_state_holding_cost"].sum()),
+        "steady_state_shortage_cost":float(detail["steady_state_shortage_cost"].sum()),
+        "steady_state_ordering_cost":float(detail["steady_state_ordering_cost"].sum()),
+        "steady_state_total_cost":float(detail["steady_state_total_cost"].sum()),
         **params,
     }
 
