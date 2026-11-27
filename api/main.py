@@ -127,3 +127,29 @@ def model_metrics():
 @app.get("/api/v1/sql-eda")
 def sql_eda():
     return _safe_json("sql-eda/sql_eda_results.json")
+
+
+@app.get("/api/v1/wavelet/metrics")
+def wavelet_metrics():
+    return _safe_json("wavelet-experiment-artifacts/wavelet_metrics.json")
+
+
+@app.get("/api/v1/wavelet/feature-importance")
+def wavelet_feature_importance(limit: int = Query(100, ge=1, le=2000)):
+    df = _safe_csv("wavelet-experiment-artifacts/wavelet_feature_importance.csv")
+    return {"total": int(len(df)), "rows": df.head(limit).fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/wavelet/predictions")
+def wavelet_predictions(
+    store_id: str | None = None,
+    product_id: str | None = None,
+    limit: int = Query(5000, ge=1, le=10000),
+):
+    df = _safe_csv("wavelet-experiment-artifacts/wavelet_evaluation_predictions.csv")
+    if store_id is not None and "store_id" in df.columns:
+        df = df[df["store_id"].astype(str) == store_id]
+    if product_id is not None and "product_id" in df.columns:
+        df = df[df["product_id"].astype(str) == product_id]
+    total = len(df)
+    return {"total": int(total), "rows": df.head(limit).replace({float("nan"): None}).to_dict(orient="records")}
