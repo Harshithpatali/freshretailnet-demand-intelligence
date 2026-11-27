@@ -23,10 +23,14 @@ BLOCK_DAYS=7
 MIN_VALIDATION_GAIN_PCT=0.5
 MIN_TRAIN_DATES=56
 MIN_HURDLE_VALIDATION_POSITIVES=20
-SEED=20261202
-PARAMS={"learning_rate":0.04,"num_leaves":63,"min_data_in_leaf":150,
+# Match src/train_model.py so the benchmark represents the current production baseline.
+SEED=42
+PARAMS={"objective":"regression","metric":"l1","learning_rate":0.05,
+ "num_leaves":63,"max_depth":-1,"min_data_in_leaf":100,
  "feature_fraction":0.85,"bagging_fraction":0.85,"bagging_freq":1,
- "lambda_l2":5.0,"verbosity":-1,"seed":SEED,"num_threads":4}
+ "lambda_l2":2.0,"verbosity":-1,"seed":SEED,"num_threads":4}
+NUM_BOOST_ROUND=1200
+EARLY_STOPPING_ROUNDS=80
 
 def client():
  return boto3.client("s3",endpoint_url=f"https://{env('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com",
@@ -76,8 +80,8 @@ def fit_model(tr,va,features,cats,objective="regression_l1",binary=False):
  vlabel=(va.target.to_numpy()>0).astype(int) if binary else va.target
  dtr=lgb.Dataset(tr[features],label=label,categorical_feature=cats,free_raw_data=False)
  dva=lgb.Dataset(va[features],label=vlabel,categorical_feature=cats,reference=dtr,free_raw_data=False)
- model=lgb.train(params,dtr,num_boost_round=1100,valid_sets=[dva],
-  callbacks=[lgb.early_stopping(70,verbose=False)])
+ model=lgb.train(params,dtr,num_boost_round=NUM_BOOST_ROUND,valid_sets=[dva],
+  callbacks=[lgb.early_stopping(EARLY_STOPPING_ROUNDS,verbose=False)])
  return model
 
 def predict_frame(model, frame, features, cats):
