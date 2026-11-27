@@ -1,0 +1,33 @@
+name: Segment Specialist Multi-Window Rolling Backtest
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "experiments/demand_intelligence/segment_rolling_backtest.py"
+      - "src/train_model.py"
+      - ".github/workflows/segment-rolling-backtest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rolling-backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install --upgrade boto3 polars pyarrow pandas numpy scikit-learn lightgbm
+      - name: Compile backtest
+        run: python -m py_compile experiments/demand_intelligence/segment_rolling_backtest.py src/train_model.py
+      - name: Run multi-window rolling backtest
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python experiments/demand_intelligence/segment_rolling_backtest.py
