@@ -91,7 +91,7 @@ def main():
         ).drop("dt").to_pandas()
         wave = build_wavelet_features(wave_input)
         wave["date"] = pd.to_datetime(wave["date"]).dt.date
-        wave_pl = pl.from_pandas(wave)
+        wave_pl = pl.from_pandas(wave).with_columns(pl.col("date").cast(pl.Date))
         merged = base.join(
             wave_pl, on=["store_id", "product_id", "date"], how="inner"
         )
