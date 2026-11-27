@@ -2,6 +2,10 @@ name: Wavelet Feature Experiment
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "experiments/wavelet/**"
+      - ".github/workflows/wavelet-experiment.yml"
 
 permissions:
   contents: read
