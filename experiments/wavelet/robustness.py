@@ -92,7 +92,7 @@ def split(frame, valid_dates, eval_dates):
     tr = frame.filter(~pl.col("date").is_in(list(valid_dates)) & ~pl.col("date").cast(pl.String).is_in(list(eval_dates)))
     va = frame.filter(pl.col("date").is_in(list(valid_dates)))
     ev = frame.filter(pl.col("date").cast(pl.String).is_in(list(eval_dates)))
-    return [x.drop("date").to_pandas() for x in (tr,va,ev)]
+    return [x.to_pandas() for x in (tr,va,ev)]
 
 def main():
     s3, bucket = client(), env("R2_BUCKET")
