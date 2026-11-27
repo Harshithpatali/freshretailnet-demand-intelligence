@@ -199,10 +199,26 @@ def main():
       "test_start":str(min(ed).date()),"test_end":str(max(ed).date()),
       "train_rows":len(tr),"validation_rows":len(va),"test_rows":len(ev)})
   fdf=pd.DataFrame(fold_rows); sdf=pd.DataFrame(selection_rows); pdf=pd.DataFrame(prediction_rows)
+  # Refuse to publish partial or malformed prediction outputs.  The CSV stores
+  # one row per entity/date with both model predictions, so group by horizon only.
+  if pdf.empty:
+   raise RuntimeError("No test predictions were generated; refusing to publish empty artifacts")
+  expected_horizons=set(HORIZONS)
+  observed_horizons=set(pdf["horizon_days"].astype(int).unique())
+  if observed_horizons!=expected_horizons:
+   raise RuntimeError(f"Prediction horizon mismatch: expected={sorted(expected_horizons)}, observed={sorted(observed_horizons)}")
+  values=pdf[["actual","baseline_prediction","selected_prediction"]].to_numpy(dtype=float)
+  if not np.isfinite(values).all():
+   raise RuntimeError("Non-finite actuals or predictions found; refusing to publish metrics")
   pooled=[]
-  for (h,model),g in pdf.groupby("horizon_days"):
+  for h,g in pdf.groupby("horizon_days",sort=True):
+   observed_folds=set(g["fold"].astype(int).unique())
+   expected_folds=set(range(1,FOLDS+1))
+   if observed_folds!=expected_folds:
+    raise RuntimeError(f"h={h}: incomplete test folds; expected={sorted(expected_folds)}, observed={sorted(observed_folds)}")
    for name,col in [("current_lightgbm_baseline","baseline_prediction"),("validation_gated_segment_specialists","selected_prediction")]:
-    pooled.append({"horizon_days":int(h),"model":name,**score(g.actual,g[col])})
+    pooled.append({"horizon_days":int(h),"model":name,"rows":int(len(g)),
+                   "test_folds":int(g["fold"].nunique()),**score(g.actual,g[col])})
   stability=[]
   for (h,seg),g in sdf.groupby(["horizon_days","segment"]):
    wins=int(g.selected.sum()); folds=int(len(g))
