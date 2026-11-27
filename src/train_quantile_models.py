@@ -41,7 +41,8 @@ def make_features(df):
     excluded={"dt","date","sale_amount","hours_sale","hours_stock_status","hourly_sales_sum",
       "hourly_sales_mean","hourly_sales_peak","hourly_slots","stock_status_sum","stock_status_slots","stock_hour6_22_cnt"}
     feats=[c for c in df.columns if c not in excluded]
-    return df.drop_nulls(subset=["sales_lag_1","sales_lag_7"]).select(["date","store_id","product_id","sale_amount","stock_hour6_22_cnt"]+feats)
+    select_cols=list(dict.fromkeys(["date","store_id","product_id","sale_amount","stock_hour6_22_cnt"]+feats))
+    return df.drop_nulls(subset=["sales_lag_1","sales_lag_7"]).select(select_cols)
 def pinball(y,p,q):
     e=np.asarray(y)-np.asarray(p)
     return float(np.maximum(q*e,(q-1)*e).mean())
