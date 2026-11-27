@@ -258,7 +258,7 @@ def main():
                 print(f"Generating engineered-signal wavelets: {family}, window={window}")
                 wf = wavelet_features(wave_raw, window, family)
                 wf_pl = pl.from_pandas(wf).with_columns(pl.col("date").cast(pl.Date))
-                joined = frame.join(wf_pl, on=GROUP + ["date"], how="inner")
+                joined = frame.join(wf_pl, on=GROUP + ["date"], how="inner").sort(GROUP + ["date"])
                 wcols = [c for c in wf.columns if c not in GROUP + ["date"]]
                 tr = joined.filter(~pl.col("date").is_in(list(valid_dates))
                                    & ~pl.col("date").cast(pl.String).is_in(list(eval_dates))).to_pandas()
