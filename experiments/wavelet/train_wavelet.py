@@ -172,12 +172,16 @@ def main():
         metrics_path = root / "wavelet_metrics.json"
         metrics_path.write_text(json.dumps(results, indent=2))
         pred_path = root / "wavelet_evaluation_predictions.csv"
-        pd.DataFrame({
+        prediction_frame = pd.DataFrame({
+            "date": eval_df.get_column("date").to_list(),
+            "store_id": eval_pd["store_id"].astype(str).to_numpy(),
+            "product_id": eval_pd["product_id"].astype(str).to_numpy(),
             "actual_sale_amount": ye,
             "seasonal_naive_lag7": eval_naive,
             "lightgbm_same_rows": base_e,
             "wavelet_lightgbm": wave_e,
-        }).to_csv(pred_path, index=False)
+        })
+        prediction_frame.to_csv(pred_path, index=False)
         importance_path = root / "wavelet_feature_importance.csv"
         pd.DataFrame({
             "feature": all_features,
