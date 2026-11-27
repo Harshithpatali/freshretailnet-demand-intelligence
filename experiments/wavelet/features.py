@@ -6,7 +6,7 @@ import pandas as pd
 import pywt
 
 WAVELET = "db4"
-LEVEL = 3
+LEVEL = 2
 WINDOW = 32
 
 
@@ -27,7 +27,6 @@ def build_wavelet_features(frame: pd.DataFrame) -> pd.DataFrame:
         "wavelet_approx_energy",
         "wavelet_detail_energy_l1",
         "wavelet_detail_energy_l2",
-        "wavelet_detail_energy_l3",
         "wavelet_coefficient_entropy",
         "wavelet_high_low_energy_ratio",
         "wavelet_smoothed_mean_32",
@@ -50,12 +49,11 @@ def build_wavelet_features(frame: pd.DataFrame) -> pd.DataFrame:
         coeffs = pywt.wavedec(
             windows, WAVELET, mode="periodization", level=LEVEL, axis=1
         )
-        approx, detail3, detail2, detail1 = coeffs
+        approx, detail2, detail1 = coeffs
         energies = [
             np.mean(np.square(approx), axis=1),
             np.mean(np.square(detail1), axis=1),
             np.mean(np.square(detail2), axis=1),
-            np.mean(np.square(detail3), axis=1),
         ]
         energy_matrix = np.column_stack(energies)
         total_energy = np.maximum(energy_matrix.sum(axis=1), 1e-12)
