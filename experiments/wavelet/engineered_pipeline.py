@@ -216,7 +216,7 @@ def main():
         ).sort(GROUP + ["date"]).with_columns(
             pl.col("date").cum_count().over(GROUP).alias("_series_n")
         ).filter(pl.col("_series_n") > 64).select(GROUP + ["date"])
-        frame = engineered.join(eligibility, on=GROUP + ["date"], how="inner")
+        frame = engineered.join(eligibility, on=GROUP + ["date"], how="inner").sort(GROUP + ["date"])
         dates = frame.filter(~pl.col("date").cast(pl.String).is_in(list(eval_dates))).select(
             pl.col("date").unique().sort()
         ).to_series().to_list()
