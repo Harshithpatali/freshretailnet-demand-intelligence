@@ -56,7 +56,7 @@ freshness = {
     "Quantile forecast": quant.get("generated_at_utc"),
     "Stockout diagnostics": stock.get("generated_at_utc"),
 }
-tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation", "SQL EDA", "Experiment lab"])
+tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation", "SQL EDA", "Experiment lab", "Wavelet benchmark"])
 
 with tabs[0]:
     ev = point.get("evaluation", {})
@@ -351,3 +351,8 @@ with tabs[6]:
             st.download_button("Download experiment results (CSV)", result_df.to_csv(index=False), "freshretailnet_experiment_results.csv", "text/csv")
             st.download_button("Download experiment configuration (JSON)", __import__("json").dumps(config, indent=2), "freshretailnet_experiment_config.json", "application/json")
             st.warning("Interpretation limits: this experiment uses observed sales as a demand proxy, has a short evaluation horizon, and assumes deterministic lead time. It does not estimate causal effects or real-world savings. Orders arriving after the evaluation horizon are suppressed.")
+
+
+with tabs[7]:
+    from wavelet_tab import render_wavelet_tab
+    render_wavelet_tab(API, get_json, metric, compact_table)
