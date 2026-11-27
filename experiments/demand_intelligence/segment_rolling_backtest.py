@@ -127,7 +127,22 @@ def main():
    dates=sorted(pdf.target_date.dt.normalize().unique())
    # Reserve the latest 3 disjoint 7-day blocks as test windows; each has its own
    # immediately preceding 7-day validation block and expanding historical train.
-   test_blocks=[dates[-(FOLDS-i)*BLOCK_DAYS:-(FOLDS-i-1)*BLOCK_DAYS if (FOLDS-i-1)>0 else None] for i in range(FOLDS)]
+   # Start with the latest disjoint blocks, but shift the whole backtest
+   # earlier when the first fold would leave too little expanding training history.
+   required_prior=MIN_TRAIN_DATES+BLOCK_DAYS
+   available_prior=len(dates)-FOLDS*BLOCK_DAYS
+   offset=max(0,required_prior-available_prior)
+   if len(dates)-offset < FOLDS*BLOCK_DAYS+required_prior:
+    raise RuntimeError(
+     f"h={h}: insufficient dates for {FOLDS} folds "
+     f"({MIN_TRAIN_DATES} train + {BLOCK_DAYS} validation + "
+     f"{FOLDS*BLOCK_DAYS} test dates required)"
+    )
+   block_start=len(dates)-offset-FOLDS*BLOCK_DAYS
+   test_blocks=[
+    dates[block_start+i*BLOCK_DAYS:block_start+(i+1)*BLOCK_DAYS]
+    for i in range(FOLDS)
+   ]
    for fi,ed in enumerate(test_blocks,1):
     if len(ed)!=BLOCK_DAYS: raise RuntimeError(f"h={h} fold={fi}: expected {BLOCK_DAYS} test dates, got {len(ed)}")
     first=ed[0]; prior=[d for d in dates if d<first]
