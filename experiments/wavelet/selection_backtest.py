@@ -60,19 +60,27 @@ def fit(train, valid, test, cols, cats, params, label, importance=False):
 def metrics(y,p):
     return {k:float(v) for k,v in metric_pack(np.asarray(y),np.asarray(p)).items()}
 
-def date_folds(all_dates, n=3, horizon=7, validation=14):
+def date_folds(all_dates, n=3, horizon=7, validation=7, min_train=7):
+    """Build expanding-window folds; shorten horizons only when the available history requires it."""
     ds = sorted(pd.to_datetime(list(all_dates)).normalize().unique())
-    # Select the latest 3 consecutive, non-overlapping evaluation windows.
-    folds=[]
-    for k in range(n,0,-1):
-        end_idx = len(ds) - (k-1)*horizon
-        start_idx = end_idx-horizon
-        if start_idx <= validation+10: continue
-        ev = ds[start_idx:end_idx]
-        va = ds[start_idx-validation:start_idx]
-        train_end = start_idx-validation
+    # Keep three non-overlapping evaluation windows where possible. With a shorter
+    # history, reduce the window length rather than silently dropping folds.
+    available = len(ds) - validation - min_train
+    effective_horizon = min(horizon, available // n) if available > 0 else 0
+    if effective_horizon < 1:
+        return []
+    folds = []
+    for k in range(n, 0, -1):
+        start_idx = len(ds) - k * effective_horizon
+        end_idx = start_idx + effective_horizon
+        train_end = start_idx - validation
+        if train_end < min_train:
+            continue
         tr = ds[:train_end]
-        folds.append((tr,va,ev))
+        va = ds[train_end:start_idx]
+        ev = ds[start_idx:end_idx]
+        if len(tr) >= min_train and len(va) == validation and len(ev) == effective_horizon:
+            folds.append((tr, va, ev))
     return folds
 
 def two_way_date_series_bootstrap(pred_frame, baseline_col, candidate_cols):
