@@ -257,18 +257,34 @@ def main():
     pooled.append({"horizon_days":int(h),"model":name,"rows":int(len(g)),
                    "test_folds":int(g["fold"].nunique()),**score(g.actual,g[col])})
   stability=[]
-  for (h,seg),g in sdf.groupby(["horizon_days","segment"]):
+  for (h,seg),g in sdf.groupby(["horizon_days","segment"],sort=True):
    wins=int(g.selected.sum()); folds=int(len(g))
    stable=wins>=max(2,int(np.ceil(2*folds/3)))
-   stability.append({"horizon_days":int(h),"segment":seg,"validation_wins":wins,"eligible_folds":folds,
-    "stable_specialist":bool(stable),"selection_frequency_pct":100*wins/max(folds,1)})
+   ineligible=int(g.reason.astype(str).str.startswith("insufficient").sum())
+   stability.append({"horizon_days":int(h),"segment":seg,"validation_wins":wins,"validation_folds":folds,
+    "ineligible_folds":ineligible,"stable_specialist":bool(stable),
+    "selection_frequency_pct":100*wins/max(folds,1)})
+  segment_test_metrics=[]
+  for (h,seg),g in pdf.groupby(["horizon_days","segment"],sort=True):
+   base=score(g.actual,g.baseline_prediction)
+   selected=score(g.actual,g.selected_prediction)
+   picked=sdf[(sdf.horizon_days==h)&(sdf.segment==seg)]
+   segment_test_metrics.append({
+    "horizon_days":int(h),"segment":str(seg),"rows":int(len(g)),
+    "test_folds":int(g.fold.nunique()),"specialist_selected_folds":int(picked.selected.sum()),
+    "baseline_mae":base["mae"],"selected_mae":selected["mae"],
+    "mae_improvement_pct":100*(base["mae"]-selected["mae"])/max(base["mae"],1e-9),
+    "baseline_rmse":base["rmse"],"selected_rmse":selected["rmse"],
+    "baseline_wape_pct":base["wape_pct"],"selected_wape_pct":selected["wape_pct"]
+   })
   report={"experiment":"multi-window rolling backtest with validation-gated segment specialists",
    "fold_design":{"folds":FOLDS,"configured_test_block_days":BLOCK_DAYS,"validation_block_days":BLOCK_DAYS,
     "training":"expanding chronological history","test_windows_disjoint":True,"effective_test_block_days_by_horizon":{str(h):next(a["test_dates"] for a in audits if a["horizon_days"]==h and a["fold"]==1) for h in HORIZONS}},
    "selection_policy":{"metric":"segment validation MAE","minimum_gain_pct":MIN_VALIDATION_GAIN_PCT,
     "stability_rule":"recommend a segment specialist only if validation selects it in at least 2 of 3 folds",
     "test_isolation":"test blocks are never used to select a specialist; only validation scores control routing"},
-   "pooled_test_metrics":pooled,"fold_test_metrics":fold_rows,"selection_diagnostics":stability,
+   "pooled_test_metrics":pooled,"fold_test_metrics":fold_rows,
+   "segment_test_metrics":segment_test_metrics,"selection_diagnostics":stability,
    "fold_audit":audits,"selection_details":selection_rows,
    "segment_strategy":{"smooth":"LightGBM regression","erratic":"Huber LightGBM","lumpy":"occurrence classifier x positive-size regressor","intermittent":"occurrence classifier x positive-size regressor"},
    "calendar_features":target_cal_cols,"calendar_policy":"Only explicitly named target-date calendar flags are specialist-only; original origin-date flags remain in the production baseline. Verify target flags are available before forecast time.",
