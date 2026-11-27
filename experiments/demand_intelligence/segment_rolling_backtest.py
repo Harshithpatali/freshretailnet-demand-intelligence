@@ -211,7 +211,7 @@ def main():
     "stable_specialist":bool(stable),"selection_frequency_pct":100*wins/max(folds,1)})
   report={"experiment":"multi-window rolling backtest with validation-gated segment specialists",
    "fold_design":{"folds":FOLDS,"configured_test_block_days":BLOCK_DAYS,"validation_block_days":BLOCK_DAYS,
-    "training":"expanding chronological history","test_windows_disjoint":True,"effective_test_block_days_by_horizon":{str(h):len([a for a in audits if a["horizon_days"]==h and a["fold"]==1]) for h in HORIZONS}},
+    "training":"expanding chronological history","test_windows_disjoint":True,"effective_test_block_days_by_horizon":{str(h):next(a["test_dates"] for a in audits if a["horizon_days"]==h and a["fold"]==1) for h in HORIZONS}},
    "selection_policy":{"metric":"segment validation MAE","minimum_gain_pct":MIN_VALIDATION_GAIN_PCT,
     "stability_rule":"recommend a segment specialist only if validation selects it in at least 2 of 3 folds",
     "test_isolation":"test blocks are never used to select a specialist; only validation scores control routing"},
