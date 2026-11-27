@@ -159,8 +159,7 @@ def main():
    cats=[c for c in ["city_id","store_id","management_group_id","first_category_id","second_category_id",
     "third_category_id","product_id","day_of_week","month","demand_segment","target_day_of_week","target_month"] if c in features]
    pred,fit_report=fit_one(tr,va,ev,features,cats)
-   naive_col=f"sales_lag_{h}"
-   if naive_col not in ev.columns: naive_col="sales_lag_7" if "sales_lag_7" in ev.columns else "sales_lag_1"
+   naive_col="sales_lag_1"  # persistence baseline: latest observed sale at forecast origin
    model_metrics=metrics(ev.target,pred); naive_metrics=metrics(ev.target,ev[naive_col].fillna(0))
    improvement={k:float((naive_metrics[k]-model_metrics[k])/max(abs(naive_metrics[k]),1e-9)*100) for k in ("mae","rmse","wape_pct")}
    horizon_results.append({"horizon_days":h,"evaluation_dates":{"start":str(min(eval_days).date()),"end":str(max(eval_days).date()),"count":len(eval_days)},
