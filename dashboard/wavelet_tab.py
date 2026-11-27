@@ -14,7 +14,7 @@ def render_wavelet_tab(api_base, get_json, metric, compact_table):
     try:
         metrics = get_json("/api/v1/wavelet/metrics")
         importance_payload = get_json("/api/v1/wavelet/feature-importance", {"limit": 2000})
-        prediction_payload = get_json("/api/v1/wavelet/predictions", {"limit": 10000})
+        prediction_payload = get_json("/api/v1/wavelet/predictions", {"limit": 1})
     except Exception as exc:
         st.warning(
             "Wavelet artifacts are not available through the API yet. Confirm that the "
@@ -86,19 +86,23 @@ def render_wavelet_tab(api_base, get_json, metric, compact_table):
 
     st.markdown("#### Actual vs predicted — evaluation")
     pred = pd.DataFrame(prediction_payload.get("rows", []))
-    if pred.empty:
-        st.info("No evaluation prediction rows were returned.")
-    else:
-        if {"store_id", "product_id"}.issubset(pred.columns):
-            pairs = pred[["store_id", "product_id"]].astype(str).drop_duplicates().sort_values(["store_id", "product_id"])
+    if not pred.empty and {"store_id", "product_id"}.issubset(pred.columns):
+        pairs = pd.DataFrame(prediction_payload.get("series", []))
+        if not pairs.empty:
             labels = [f"Store {r.store_id} · Product {r.product_id}" for r in pairs.itertuples(index=False)]
             selected = st.selectbox("Store-product series", range(len(labels)),
                                     format_func=lambda i: labels[i], key="wavelet_series")
             pair = pairs.iloc[selected]
-            pred = pred[
-                (pred["store_id"].astype(str) == pair["store_id"])
-                & (pred["product_id"].astype(str) == pair["product_id"])
-            ]
+            prediction_payload = get_json("/api/v1/wavelet/predictions", {
+                "store_id": str(pair["store_id"]), "product_id": str(pair["product_id"]), "limit": 10000
+            })
+            pred = pd.DataFrame(prediction_payload.get("rows", []))
+    elif not pred.empty and "date" not in pred.columns:
+        prediction_payload = get_json("/api/v1/wavelet/predictions", {"limit": 10000})
+        pred = pd.DataFrame(prediction_payload.get("rows", []))
+    if pred.empty:
+        st.info("No evaluation prediction rows were returned.")
+    else:
         if "date" in pred.columns:
             pred["date"] = pd.to_datetime(pred["date"], errors="coerce")
             pred = pred.sort_values("date")
