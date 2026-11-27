@@ -41,7 +41,7 @@ def make_features(df):
     excluded={"dt","date","sale_amount","hours_sale","hours_stock_status","hourly_sales_sum",
       "hourly_sales_mean","hourly_sales_peak","hourly_slots","stock_status_sum","stock_status_slots","stock_hour6_22_cnt"}
     feats=[c for c in df.columns if c not in excluded]
-    return df.drop_nulls(subset=["sales_lag_1","sales_lag_7"]).select(["date","sale_amount","stock_hour6_22_cnt"]+feats)
+    return df.drop_nulls(subset=["sales_lag_1","sales_lag_7"]).select(["date","store_id","product_id","sale_amount","stock_hour6_22_cnt"]+feats)
 def pinball(y,p,q):
     e=np.asarray(y)-np.asarray(p)
     return float(np.maximum(q*e,(q-1)*e).mean())
@@ -90,7 +90,7 @@ def main():
         vd=set(dates[-14:])
         a=tr.filter(~pl.col("date").is_in(list(vd))).drop("date").to_pandas()
         v=tr.filter(pl.col("date").is_in(list(vd))).drop("date").to_pandas()
-        e=ev.drop("date").to_pandas()
+        e=ev.to_pandas()
         target="sale_amount"; diag={"stock_hour6_22_cnt"}
         feats=[c for c in a.columns if c not in ({target}|diag)]
         cats=[c for c in ("city_id","store_id","management_group_id","first_category_id","second_category_id",
@@ -134,9 +134,10 @@ def main():
           "generated_at_utc":datetime.now(timezone.utc).isoformat()}
         mf=root/"quantile_metrics.json"; mf.write_text(json.dumps(result,indent=2,default=str))
         pf=root/"evaluation_quantile_predictions.csv"
-        pd.DataFrame({"actual_sale_amount":ye.to_numpy(),"p10":ep[.10],"p50":ep[.50],"p90":ep[.90],
+        pd.DataFrame({"date":e["date"].astype(str),"store_id":e["store_id"],"product_id":e["product_id"],
+                      "actual_sale_amount":ye.to_numpy(),"p10":ep[.10],"p50":ep[.50],"p90":ep[.90],
                       "p10_calibrated":eval_lo,"p90_calibrated":eval_hi,
-                      "stock_hour6_22_cnt":e.stock_hour6_22_cnt.to_numpy()}).to_csv(pf,index=False)
+                      "stock_hour6_22_cnt":e["stock_hour6_22_cnt"].to_numpy()}).to_csv(pf,index=False)
         for f in paths+[mf,pf]:
             key=f"quantile-model-artifacts/{f.name}"
             typ="application/json" if f.suffix==".json" else "text/csv" if f.suffix==".csv" else "text/plain"
