@@ -56,7 +56,7 @@ freshness = {
     "Quantile forecast": quant.get("generated_at_utc"),
     "Stockout diagnostics": stock.get("generated_at_utc"),
 }
-tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation"])
+tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation", "SQL EDA"])
 
 with tabs[0]:
     ev = point.get("evaluation", {})
@@ -191,3 +191,43 @@ with tabs[4]:
         cols = [c for c in ["scenario","policy","steady_state_fill_rate_pct","steady_state_total_cost","steady_state_shortage_cost"] if c in sens]
         compact_table(sens[cols], 320)
     st.warning("Costs, lead time, review cadence and starting inventory are simulation assumptions. The short evaluation horizon and observed-sales proxy limit operational interpretation.")
+
+
+with tabs[5]:
+    st.subheader("SQL exploratory data analysis")
+    st.caption("Precomputed DuckDB SQL results over the training Parquet in R2. Select a query to inspect its SQL and result table.")
+    try:
+        eda = get_json("/api/v1/sql-eda")
+        st.caption(f"Engine: {eda.get('engine', 'DuckDB')} · Generated: {eda.get('generated_at_utc', 'unknown')} · Queries: {eda.get('query_count', 0)}")
+        query_items = eda.get("queries", [])
+        if query_items:
+            titles = [item["title"] for item in query_items]
+            selected_query = st.selectbox("EDA query", range(len(titles)), format_func=lambda i: titles[i])
+            item = query_items[selected_query]
+            st.markdown(f"**{item['title']}**")
+            st.code(item["sql"], language="sql")
+            result = pd.DataFrame(item.get("rows", []), columns=item.get("columns", []))
+            st.caption(f"{item.get('row_count_returned', len(result)):,} result rows")
+            compact_table(result, 380)
+            if not result.empty:
+                numeric = result.select_dtypes(include="number").columns.tolist()
+                if item["id"] == "daily_sales_trend" and "total_observed_sales" in numeric:
+                    fig = px.line(result, x="date", y="total_observed_sales", title="Daily total observed sales")
+                    fig.update_layout(height=360, margin={"l":15,"r":15,"t":55,"b":20})
+                    st.plotly_chart(fig, use_container_width=True)
+                elif item["id"] in ("top_stores", "top_products") and "total_observed_sales" in numeric:
+                    category = "store_id" if "store_id" in result else "product_id"
+                    fig = px.bar(result.sort_values("total_observed_sales"), x="total_observed_sales", y=category, orientation="h", title=item["title"])
+                    fig.update_layout(height=460, margin={"l":15,"r":15,"t":55,"b":20})
+                    st.plotly_chart(fig, use_container_width=True)
+                elif item["id"] == "weekday_pattern" and "mean_observed_sales" in numeric:
+                    fig = px.bar(result, x="weekday", y="mean_observed_sales", title="Mean observed sales by weekday")
+                    fig.update_layout(height=360, margin={"l":15,"r":15,"t":55,"b":20})
+                    st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No SQL EDA results have been published yet. Run the FreshRetailNet SQL EDA workflow in GitHub Actions.")
+        st.info(eda.get("source_semantics", "Observed sales may be censored by stock availability; this is descriptive EDA."))
+    except requests.HTTPError as exc:
+        st.warning("SQL EDA results are not published yet. Run the FreshRetailNet SQL EDA workflow in GitHub Actions, then refresh this page.")
+    except Exception as exc:
+        st.error(f"Could not load SQL EDA results: {exc}")
