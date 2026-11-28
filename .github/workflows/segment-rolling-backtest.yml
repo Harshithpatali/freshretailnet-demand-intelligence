@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "experiments/demand_intelligence/segment_rolling_backtest.py"
+      - "experiments/demand_intelligence/cluster_bootstrap_report.py"
       - "src/train_model.py"
       - ".github/workflows/segment-rolling-backtest.yml"
 
@@ -22,12 +23,22 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: python -m pip install --upgrade boto3 polars pyarrow pandas numpy scikit-learn lightgbm
-      - name: Compile backtest
-        run: python -m py_compile experiments/demand_intelligence/segment_rolling_backtest.py src/train_model.py
-      - name: Run multi-window rolling backtest
+      - name: Compile backtest and uncertainty report
+        run: python -m py_compile experiments/demand_intelligence/segment_rolling_backtest.py experiments/demand_intelligence/cluster_bootstrap_report.py src/train_model.py
+      - name: Run five-fold multi-window rolling backtest
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: python experiments/demand_intelligence/segment_rolling_backtest.py
+          ROLLING_FOLDS: "5"
+        run: python -u experiments/demand_intelligence/segment_rolling_backtest.py
+      - name: Calculate paired cluster-bootstrap intervals from saved predictions
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          BOOTSTRAP_REPS: "500"
+          BOOTSTRAP_SEED: "20261128"
+        run: python -u experiments/demand_intelligence/cluster_bootstrap_report.py
