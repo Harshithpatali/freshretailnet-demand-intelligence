@@ -134,7 +134,7 @@ def forecasts(store_id: str | None = None, product_id: str | None = None,
 @app.get("/api/v1/filters")
 def filters():
     df = _safe_csv("quantile-model-artifacts/evaluation_quantile_predictions.csv")
-    df = _require_columns(df, "quantile-model-artifacts/evaluation_quantile_predictions.csv", {"store_id", "product_id", "date"})\n    df = _require_columns(df, "quantile-model-artifacts/evaluation_quantile_predictions.csv", {"store_id", "product_id", "date"})
+    df = _require_columns(df, "quantile-model-artifacts/evaluation_quantile_predictions.csv", {"store_id", "product_id", "date"})
     pairs = df[["store_id", "product_id"]].astype(str).drop_duplicates().sort_values(["store_id", "product_id"])
     return {"stores": sorted(df["store_id"].astype(str).unique().tolist()),
             "products": sorted(df["product_id"].astype(str).unique().tolist()),
