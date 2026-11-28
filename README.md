@@ -170,3 +170,36 @@ Detailed steps: [docs/APP_DEPLOYMENT.md](docs/APP_DEPLOYMENT.md).
 ## License and attribution
 
 The source dataset is distributed under CC BY 4.0; retain attribution to the dataset authors and review the dataset card's terms when redistributing derived data. This repository's own code license should be specified by the repository owner before external reuse.
+
+
+## Reproducible small-data demo
+
+Run the synthetic inventory demo without R2 credentials or the full dataset:
+
+```bash
+pip install -r api/requirements.txt
+python scripts/run_small_demo.py --output-dir demo_output
+```
+
+It writes a synthetic forecast CSV, policy simulation CSV and JSON summary. These
+fixtures demonstrate execution and accounting only; they are not benchmark data.
+See [the demo guide](docs/SMALL_DATA_DEMO.md).
+
+## Experiment uncertainty and sample sizes
+
+The multi-window segment rolling backtest publishes:
+- `segment_rolling_backtest_comparison.csv`: paired baseline/challenger metrics,
+  95% cluster-bootstrap intervals, evaluation row counts, store-product clusters,
+  test folds and bootstrap replicate counts.
+- `segment_rolling_backtest_comparison.md`: readable comparison report.
+- `segment_rolling_backtest_report.json`: full fold audits, selection diagnostics,
+  sample-size summary and bootstrap methodology.
+
+Intervals quantify cross-sectional cluster uncertainty, not future temporal
+window uncertainty. See [artifact failure and recovery behaviour](docs/ARTIFACT_FAILURE_HANDLING.md).
+
+## Quality checks
+
+GitHub Actions compiles the Python modules, runs offline API/artifact and inventory
+forecasting tests, and runs Ruff static checks. The checks monkeypatch R2 access;
+they do not require production credentials or assert that remote artifacts exist.
