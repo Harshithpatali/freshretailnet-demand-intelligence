@@ -174,6 +174,7 @@ def main():
    ]
    print(f"h={h}: {len(dates)} target dates; {FOLDS} test folds x "
          f"{effective_block_days} days; min train={MIN_TRAIN_DATES}, validation={BLOCK_DAYS}")
+   selection_history={seg:[] for seg in ["smooth","erratic","lumpy","intermittent"]}
    for fi,ed in enumerate(test_blocks,1):
     if len(ed)!=effective_block_days: raise RuntimeError(f"h={h} fold={fi}: expected {effective_block_days} test dates, got {len(ed)}")
     first=ed[0]; prior=[d for d in dates if d<first]
@@ -199,15 +200,19 @@ def main():
     # Fit each specialist once per fold, evaluate on validation for routing, then
     # apply the already-decided route to the untouched test block.
     routed=pb.copy()
+    specialist_test_predictions={}
+    current_fold_selected={}
     for seg in ["smooth","erratic","lumpy","intermittent"]:
      tr_s=tr[tr.demand_segment==seg]; va_s=va[va.demand_segment==seg]; ev_s=ev[ev.demand_segment==seg]
      if len(tr_s)<300 or len(va_s)<30 or len(ev_s)==0:
       selection_rows.append({"horizon_days":h,"fold":fi,"segment":seg,"selected":False,"reason":"insufficient segment sample"})
+      current_fold_selected[seg]=False
       continue
      if seg in ("lumpy","intermittent") and int((va_s.target>0).sum())<MIN_HURDLE_VALIDATION_POSITIVES:
       selection_rows.append({"horizon_days":h,"fold":fi,"segment":seg,"selected":False,
        "reason":"insufficient positive validation rows for hurdle regressor",
        "validation_positive_rows":int((va_s.target>0).sum())})
+      current_fold_selected[seg]=False
       continue
      # Baseline segment score and challenger validation score are calculated on the same rows.
      bval=np.maximum(predict_frame(baseline,va_s,basefeat,cats),0)
@@ -218,8 +223,17 @@ def main():
      reason="validation_mae_gain_meets_threshold" if chosen else "validation_gain_below_threshold"
      selection_rows.append({"horizon_days":h,"fold":fi,"segment":seg,"selected":bool(chosen),
        "validation_baseline_mae":bmae,"validation_specialist_mae":smae,"validation_gain_pct":gain,"reason":reason})
+     current_fold_selected[seg]=bool(chosen)
      if chosen:
-      sp_test=predict_specialist(tr_s,va_s,ev_s,allfeat,cats,seg)
+      specialist_test_predictions[seg]=predict_specialist(tr_s,va_s,ev_s,allfeat,cats,seg)
+    # Prospective gate: two completed validation wins among the latest three.
+    # No test outcome is used to enable, disable, or select a specialist.
+    for seg,selected_now in current_fold_selected.items():
+     history=selection_history[seg]
+     history.append(bool(selected_now))
+     gate_open=len(history)>=2 and sum(history[-3:])>=2
+     if gate_open and seg in specialist_test_predictions:
+      sp_test=specialist_test_predictions[seg]
       mask=ev.demand_segment.eq(seg).to_numpy()
       if int(mask.sum())!=len(sp_test): raise RuntimeError("specialist routing row mismatch")
       routed[mask]=sp_test
@@ -281,14 +295,14 @@ def main():
    "fold_design":{"folds":FOLDS,"configured_test_block_days":BLOCK_DAYS,"validation_block_days":BLOCK_DAYS,
     "training":"expanding chronological history","test_windows_disjoint":True,"effective_test_block_days_by_horizon":{str(h):next(a["test_dates"] for a in audits if a["horizon_days"]==h and a["fold"]==1) for h in HORIZONS}},
    "selection_policy":{"metric":"segment validation MAE","minimum_gain_pct":MIN_VALIDATION_GAIN_PCT,
-    "stability_rule":"recommend a segment specialist only if validation selects it in at least 2 of 3 folds",
-    "test_isolation":"test blocks are never used to select a specialist; only validation scores control routing"},
+    "stability_rule":"prospective gate: at least two completed validation windows and at least two selections in the most recent three; applies only to the subsequent test block",
+    "test_isolation":"test blocks never authorize specialists; only current and prior validation decisions control routing"},
    "pooled_test_metrics":pooled,"fold_test_metrics":fold_rows,
    "segment_test_metrics":segment_test_metrics,"selection_diagnostics":stability,
    "fold_audit":audits,"selection_details":selection_rows,
    "segment_strategy":{"smooth":"LightGBM regression","erratic":"Huber LightGBM","lumpy":"occurrence classifier x positive-size regressor","intermittent":"occurrence classifier x positive-size regressor"},
    "calendar_features":target_cal_cols,"calendar_policy":"Only explicitly named target-date calendar flags are specialist-only; original origin-date flags remain in the production baseline. Verify target flags are available before forecast time.",
-   "caveats":"Backtest uses the latest three disjoint horizon-adaptive test windows available in the combined historical dataset; each horizon's effective test length is recorded in fold_design. Hurdle specialists are not eligible in folds with fewer than the configured number of positive validation rows. Confirm stability on a later live period before production promotion.",
+   "caveats":"Backtest uses the latest three disjoint horizon-adaptive test windows available in the combined historical dataset; each horizon's effective test length is recorded in fold_design. The prospective gate keeps the first test fold on baseline; later folds can use a specialist only after two validation wins among the latest three completed windows. Hurdle specialists are not eligible in folds with too few positive validation rows. Confirm stability on a later live period before production promotion.",
    "generated_at_utc":datetime.now(timezone.utc).isoformat()}
   outputs={"segment_rolling_backtest_report.json":report,"segment_rolling_backtest_folds.csv":fdf,
    "segment_rolling_backtest_selection.csv":sdf,"segment_rolling_backtest_predictions.csv":pdf}
