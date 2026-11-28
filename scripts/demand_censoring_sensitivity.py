@@ -160,6 +160,55 @@ def main():
                 .alias("expected_lost_sales_hour")
             )
         )
+        # Out-of-time pseudo-censoring validation. Treat later evaluation
+        # hours labelled in-stock as if sales had been hidden, predict them
+        # with training-only rates, and compare predictions to observed sales.
+        # This tests proxy accuracy on known demand, not latent demand in real
+        # stockout hours.
+        known_in_stock = (
+            scored.filter(pl.col("stock_status") == 0)
+            .select("hour_of_day", "hourly_sales", "hour_rate", "global_fallback")
+        )
+        validation_actual = known_in_stock["hourly_sales"].to_numpy().astype(float)
+        validation_prediction = known_in_stock["hour_rate"].to_numpy().astype(float)
+        validation_error = validation_prediction - validation_actual
+        validation_denom = max(float(np.abs(validation_actual).sum()), 1e-9)
+        reconstruction_validation = {
+            "method": "out-of-time pseudo-censoring on evaluation hours known to be in stock",
+            "rows": int(len(validation_actual)),
+            "hourly_mae": float(np.abs(validation_error).mean()),
+            "hourly_rmse": float(np.sqrt(np.square(validation_error).mean())),
+            "hourly_wape_pct": float(100 * np.abs(validation_error).sum() / validation_denom),
+            "hourly_bias_pct": float(100 * validation_error.sum() / max(float(validation_actual.sum()), 1e-9)),
+            "global_fallback_rate_pct": float(known_in_stock["global_fallback"].mean() * 100),
+            "actual_units": float(validation_actual.sum()),
+            "predicted_units": float(validation_prediction.sum()),
+            "interpretation": (
+                "Training-only store-product-hour and global-hour rates predict later "
+                "evaluation slots where the source marks the item in stock. Their observed "
+                "hourly sales are treated as pseudo-hidden values for validation."
+            ),
+            "limitation": (
+                "This validates prediction of observed sales in available hours. It does not "
+                "validate latent demand during stockouts because the unobserved counterfactual "
+                "is never observed; it cannot establish true lost sales."
+            ),
+        }
+        validation_by_hour = (
+            known_in_stock.with_columns((pl.col("hour_rate") - pl.col("hourly_sales")).alias("error"))
+            .group_by("hour_of_day")
+            .agg([
+                pl.len().alias("rows"),
+                pl.col("hourly_sales").mean().alias("mean_actual"),
+                pl.col("hour_rate").mean().alias("mean_prediction"),
+                pl.col("error").abs().mean().alias("mae"),
+                pl.col("error").mean().alias("bias"),
+                pl.col("global_fallback").mean().alias("global_fallback_rate"),
+            ])
+            .sort("hour_of_day")
+            .to_pandas()
+        )
+
         daily_hourly = (
             scored.group_by(["store_id", "product_id", "dt"])
             .agg([
