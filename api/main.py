@@ -206,9 +206,9 @@ def filters():
 
 @app.get("/api/v1/series/search")
 def search_series(
-    q: str | None = Query(None, max_length=80),
-    store_id: str | None = Query(None, max_length=80),
-    product_id: str | None = Query(None, max_length=80),
+    q: str | None = None,
+    store_id: str | None = None,
+    product_id: str | None = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
 ):
