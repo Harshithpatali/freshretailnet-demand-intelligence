@@ -405,7 +405,50 @@ def main():
    "caveats":"Calibration factors are estimated from each fold's validation predictions and shrunk toward 1. They are not fitted on test outcomes. Compare calibrated MAE, RMSE, WAPE and bias against the uncalibrated gated challenger; calibration may reduce bias while worsening MAE. Confirm on a later live period before production promotion.",
    "uncertainty_methodology":"Paired store-product cluster bootstrap, 500 replicates, resampling each entity with all its held-out dates/folds intact. This captures cross-sectional cluster uncertainty but not uncertainty from future time-window shifts; inspect fold-level results separately.",
    "generated_at_utc":datetime.now(timezone.utc).isoformat()}
-  outputs={"segment_rolling_backtest_report.json":report,"segment_rolling_backtest_folds.csv":fdf,
+  # A compact paired comparison table makes the uncertainty and evaluation
+  # sample sizes visible without requiring consumers to parse the full JSON.
+  uncertainty_lookup={(int(x["horizon_days"]),x["estimand"]):x for x in uncertainty}
+  comparison_rows=[]
+  for h,g in pdf.groupby("horizon_days",sort=True):
+   base=score(g.actual,g.baseline_prediction)
+   challenger=score(g.actual,g.calibrated_prediction)
+   n_clusters=int(g[GROUP].astype(str).agg("::".join,axis=1).nunique())
+   metrics=[
+    ("mae_improvement_pct",100*(base["mae"]-challenger["mae"])/max(base["mae"],1e-9)),
+    ("rmse_improvement_pct",100*(base["rmse"]-challenger["rmse"])/max(base["rmse"],1e-9)),
+    ("wape_improvement_pp",base["wape_pct"]-challenger["wape_pct"]),
+    ("bias_change_pp",challenger["bias_pct"]-base["bias_pct"]),
+   ]
+   for metric_name,point in metrics:
+    ci=uncertainty_lookup[(int(h),metric_name)]
+    comparison_rows.append({"horizon_days":int(h),"comparison":"calibrated_specialists_vs_current_lightgbm",
+     "metric":metric_name,"baseline_value":base[{"mae_improvement_pct":"mae","rmse_improvement_pct":"rmse",
+       "wape_improvement_pp":"wape_pct","bias_change_pp":"bias_pct"}[metric_name]],
+     "challenger_value":challenger[{"mae_improvement_pct":"mae","rmse_improvement_pct":"rmse",
+       "wape_improvement_pp":"wape_pct","bias_change_pp":"bias_pct"}[metric_name]],
+     "improvement_point_estimate":point,"ci_95_lower":ci["ci_95_lower"],
+     "ci_95_upper":ci["ci_95_upper"],"evaluation_rows":int(len(g)),
+     "store_product_clusters":n_clusters,"test_folds":int(g.fold.nunique()),
+     "bootstrap_replicates":int(ci["bootstrap_replicates"]),
+     "uncertainty_scope":"cross-sectional paired cluster bootstrap; temporal-window uncertainty not covered"})
+  comparison_df=pd.DataFrame(comparison_rows)
+  comparison_md=["# Rolling-backtest experiment comparison","",
+   "Calibrated validation-gated segment specialists versus the current LightGBM baseline.",
+   "Intervals are paired store-product cluster-bootstrap 95% CIs; they do not capture future time-window uncertainty.","",
+   "| Horizon | Metric | Baseline | Challenger | Improvement | 95% CI | Eval rows | Clusters | Folds |",
+   "|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
+  for row in comparison_rows:
+   comparison_md.append(f"| {row['horizon_days']}d | {row['metric']} | {row['baseline_value']:.4f} | {row['challenger_value']:.4f} | {row['improvement_point_estimate']:.4f} | [{row['ci_95_lower']:.4f}, {row['ci_95_upper']:.4f}] | {row['evaluation_rows']:,} | {row['store_product_clusters']:,} | {row['test_folds']} |")
+  comparison_md += ["","**Interpretation:** positive MAE/RMSE/WAPE improvement favours the challenger; bias change is a signed percentage-point difference. Treat this as a research challenger until temporal validation is expanded."]
+  report["comparison_sample_sizes"]=[{"horizon_days":int(h),"evaluation_rows":int(len(g)),
+   "store_product_clusters":int(g[GROUP].astype(str).agg("::".join,axis=1).nunique()),
+   "test_folds":int(g.fold.nunique()),"target_dates":int(g.target_date.nunique())}
+   for h,g in pdf.groupby("horizon_days",sort=True)]
+  report["comparison_report"]="segment_rolling_backtest_comparison.csv"
+  outputs={"segment_rolling_backtest_report.json":report,
+   "segment_rolling_backtest_comparison.csv":comparison_df,
+   "segment_rolling_backtest_comparison.md":"\n".join(comparison_md)+"\n",
+   "segment_rolling_backtest_folds.csv":fdf,
    "segment_rolling_backtest_selection.csv":sdf,"segment_rolling_backtest_predictions.csv":pdf,
    "segment_rolling_backtest_calibration.csv":pd.DataFrame(calibration_audit)}
   for name,obj in outputs.items():
