@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.artifact_provenance import build_provenance, upload_versioned_artifact
 
-PREFIX = "segment-rolling-backtest-artifacts"
+PREFIX = os.getenv("SEGMENT_BACKTEST_PREFIX", "segment-rolling-backtest-artifacts").strip("/")
 PREDICTIONS_KEY = f"{PREFIX}/segment_rolling_backtest_predictions.csv"
 REPORT_KEY = f"{PREFIX}/segment_rolling_backtest_report.json"
 COMPARISON_CSV_KEY = f"{PREFIX}/segment_rolling_backtest_comparison.csv"
