@@ -216,7 +216,7 @@ def search_series(
     key = "quantile-model-artifacts/evaluation_quantile_predictions.csv"
     df = _safe_csv(key)
     df = _require_columns(df, key, {"store_id", "product_id"})
-    pairs = df[["store_id", "product_id"]].astype(str).drop_duplicates()
+    pairs = df.dropna(subset=["store_id", "product_id"])[["store_id", "product_id"]].astype(str).drop_duplicates()
     if store_id:
         pairs = pairs[pairs["store_id"].str.contains(store_id, case=False, regex=False, na=False)]
     if product_id:
