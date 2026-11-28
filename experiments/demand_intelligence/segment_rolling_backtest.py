@@ -23,6 +23,9 @@ BLOCK_DAYS=7
 MIN_VALIDATION_GAIN_PCT=0.5
 MIN_TRAIN_DATES=56
 MIN_HURDLE_VALIDATION_POSITIVES=20
+CALIBRATION_PRIOR_ROWS=2000
+CALIBRATION_MIN_FACTOR=0.80
+CALIBRATION_MAX_FACTOR=1.25
 # Match src/train_model.py so the benchmark represents the current production baseline.
 SEED=42
 PARAMS={"objective":"regression","metric":"l1","learning_rate":0.05,
@@ -131,7 +134,7 @@ def main():
     [pl.col("dt").str.to_date(strict=False).alias("target_date")]+
     [pl.col(c).alias(f"target_{c}") for c in calcols]
    ).unique(subset=GROUP+["target_date"])
-  audits=[]; fold_rows=[]; selection_rows=[]; prediction_rows=[]
+  audits=[]; fold_rows=[]; selection_rows=[]; prediction_rows=[]; calibration_audit=[]
   for h in HORIZONS:
    hf=frame.sort(GROUP+["date"]).with_columns([
     pl.col("sale_amount").shift(-h).over(GROUP).alias("target"),
@@ -200,7 +203,10 @@ def main():
     # Fit each specialist once per fold, evaluate on validation for routing, then
     # apply the already-decided route to the untouched test block.
     routed=pb.copy()
+    pval_base=np.maximum(predict_frame(baseline,va,basefeat,cats),0)
+    val_routed=pval_base.copy()
     specialist_test_predictions={}
+    specialist_val_predictions={}
     current_fold_selected={}
     for seg in ["smooth","erratic","lumpy","intermittent"]:
      tr_s=tr[tr.demand_segment==seg]; va_s=va[va.demand_segment==seg]; ev_s=ev[ev.demand_segment==seg]
@@ -225,6 +231,7 @@ def main():
        "validation_baseline_mae":bmae,"validation_specialist_mae":smae,"validation_gain_pct":gain,"reason":reason})
      current_fold_selected[seg]=bool(chosen)
      if chosen:
+      specialist_val_predictions[seg]=sp_val
       specialist_test_predictions[seg]=predict_specialist(tr_s,va_s,ev_s,allfeat,cats,seg)
     # Prospective gate: two completed validation wins among the latest three.
     # No test outcome is used to enable, disable, or select a specialist.
@@ -234,16 +241,40 @@ def main():
      gate_open=len(history)>=2 and sum(history[-3:])>=2
      if gate_open and seg in specialist_test_predictions:
       sp_test=specialist_test_predictions[seg]
-      mask=ev.demand_segment.eq(seg).to_numpy()
-      if int(mask.sum())!=len(sp_test): raise RuntimeError("specialist routing row mismatch")
-      routed[mask]=sp_test
+      test_mask=ev.demand_segment.eq(seg).to_numpy()
+      val_mask=va.demand_segment.eq(seg).to_numpy()
+      if int(test_mask.sum())!=len(sp_test): raise RuntimeError("specialist test routing row mismatch")
+      if int(val_mask.sum())!=len(specialist_val_predictions[seg]): raise RuntimeError("specialist validation routing row mismatch")
+      routed[test_mask]=sp_test
+      val_routed[val_mask]=specialist_val_predictions[seg]
+    # Fit a segment-wise multiplicative correction on this fold's validation
+    # predictions only. Shrink small segments toward 1 and clip extreme factors.
+    calibrated=routed.copy()
+    for seg in ["smooth","erratic","lumpy","intermittent"]:
+     vm=va.demand_segment.eq(seg).to_numpy()
+     tm=ev.demand_segment.eq(seg).to_numpy()
+     n=int(vm.sum())
+     if n:
+      actual_sum=float(va.loc[vm,"target"].sum())
+      pred_sum=float(val_routed[vm].sum())
+      raw_factor=actual_sum/max(pred_sum,1e-9)
+      shrink=n/(n+CALIBRATION_PRIOR_ROWS)
+      factor=float(np.clip(1+(raw_factor-1)*shrink,CALIBRATION_MIN_FACTOR,CALIBRATION_MAX_FACTOR))
+     else:
+      actual_sum=0.0; pred_sum=0.0; raw_factor=1.0; shrink=0.0; factor=1.0
+     calibrated[tm]=np.maximum(routed[tm]*factor,0)
+     calibration_audit.append({"horizon_days":h,"fold":fi,"segment":seg,"validation_rows":n,
+      "validation_actual_sum":actual_sum,"validation_prediction_sum":pred_sum,
+      "raw_factor":raw_factor,"shrinkage_weight":shrink,"applied_factor":factor})
     fold_rows.extend([
      {"horizon_days":h,"fold":fi,"model":"current_lightgbm_baseline",**score(ev.target,pb)},
-     {"horizon_days":h,"fold":fi,"model":"validation_gated_segment_specialists",**score(ev.target,routed)}])
+     {"horizon_days":h,"fold":fi,"model":"validation_gated_segment_specialists",**score(ev.target,routed)},
+     {"horizon_days":h,"fold":fi,"model":"validation_gated_segment_specialists_calibrated",**score(ev.target,calibrated)}])
     for idx,(_,r) in enumerate(ev.iterrows()):
      prediction_rows.append({"horizon_days":h,"fold":fi,"target_date":r.target_date.date().isoformat(),
       "store_id":str(r.store_id),"product_id":str(r.product_id),"segment":str(r.demand_segment),
-      "actual":float(r.target),"baseline_prediction":float(pb[idx]),"selected_prediction":float(routed[idx])})
+      "actual":float(r.target),"baseline_prediction":float(pb[idx]),"selected_prediction":float(routed[idx]),
+      "calibrated_prediction":float(calibrated[idx])})
     audits.append({"horizon_days":h,"fold":fi,"train_dates":len(td),"validation_dates":len(vd),"test_dates":len(ed),
       "train_start":str(min(td).date()),"train_end":str(max(td).date()),
       "validation_start":str(min(vd).date()),"validation_end":str(max(vd).date()),
@@ -258,7 +289,7 @@ def main():
   observed_horizons=set(pdf["horizon_days"].astype(int).unique())
   if observed_horizons!=expected_horizons:
    raise RuntimeError(f"Prediction horizon mismatch: expected={sorted(expected_horizons)}, observed={sorted(observed_horizons)}")
-  values=pdf[["actual","baseline_prediction","selected_prediction"]].to_numpy(dtype=float)
+  values=pdf[["actual","baseline_prediction","selected_prediction","calibrated_prediction"]].to_numpy(dtype=float)
   if not np.isfinite(values).all():
    raise RuntimeError("Non-finite actuals or predictions found; refusing to publish metrics")
   pooled=[]
@@ -267,7 +298,7 @@ def main():
    expected_folds=set(range(1,FOLDS+1))
    if observed_folds!=expected_folds:
     raise RuntimeError(f"h={h}: incomplete test folds; expected={sorted(expected_folds)}, observed={sorted(observed_folds)}")
-   for name,col in [("current_lightgbm_baseline","baseline_prediction"),("validation_gated_segment_specialists","selected_prediction")]:
+   for name,col in [("current_lightgbm_baseline","baseline_prediction"),("validation_gated_segment_specialists","selected_prediction"),("validation_gated_segment_specialists_calibrated","calibrated_prediction")]:
     pooled.append({"horizon_days":int(h),"model":name,"rows":int(len(g)),
                    "test_folds":int(g["fold"].nunique()),**score(g.actual,g[col])})
   stability=[]
@@ -282,12 +313,15 @@ def main():
   for (h,seg),g in pdf.groupby(["horizon_days","segment"],sort=True):
    base=score(g.actual,g.baseline_prediction)
    selected=score(g.actual,g.selected_prediction)
+   calibrated_score=score(g.actual,g.calibrated_prediction)
    picked=sdf[(sdf.horizon_days==h)&(sdf.segment==seg)]
    segment_test_metrics.append({
     "horizon_days":int(h),"segment":str(seg),"rows":int(len(g)),
     "test_folds":int(g.fold.nunique()),"specialist_selected_folds":int(picked.selected.sum()),
-    "baseline_mae":base["mae"],"selected_mae":selected["mae"],
+    "baseline_mae":base["mae"],"selected_mae":selected["mae"],"calibrated_mae":calibrated_score["mae"],
+    "calibrated_bias_pct":calibrated_score["bias_pct"],
     "mae_improvement_pct":100*(base["mae"]-selected["mae"])/max(base["mae"],1e-9),
+    "calibrated_mae_improvement_pct":100*(base["mae"]-calibrated_score["mae"])/max(base["mae"],1e-9),
     "baseline_rmse":base["rmse"],"selected_rmse":selected["rmse"],
     "baseline_wape_pct":base["wape_pct"],"selected_wape_pct":selected["wape_pct"]
    })
@@ -297,15 +331,17 @@ def main():
    "selection_policy":{"metric":"segment validation MAE","minimum_gain_pct":MIN_VALIDATION_GAIN_PCT,
     "stability_rule":"prospective gate: at least two completed validation windows and at least two selections in the most recent three; applies only to the subsequent test block",
     "test_isolation":"test blocks never authorize specialists; only current and prior validation decisions control routing"},
-   "pooled_test_metrics":pooled,"fold_test_metrics":fold_rows,
+   "pooled_test_metrics":pooled,"fold_test_metrics":fold_rows,"calibration_diagnostics":calibration_audit,
    "segment_test_metrics":segment_test_metrics,"selection_diagnostics":stability,
    "fold_audit":audits,"selection_details":selection_rows,
    "segment_strategy":{"smooth":"LightGBM regression","erratic":"Huber LightGBM","lumpy":"occurrence classifier x positive-size regressor","intermittent":"occurrence classifier x positive-size regressor"},
    "calendar_features":target_cal_cols,"calendar_policy":"Only explicitly named target-date calendar flags are specialist-only; original origin-date flags remain in the production baseline. Verify target flags are available before forecast time.",
-   "caveats":"Backtest uses the latest three disjoint horizon-adaptive test windows available in the combined historical dataset; each horizon's effective test length is recorded in fold_design. The prospective gate keeps the first test fold on baseline; later folds can use a specialist only after two validation wins among the latest three completed windows. Hurdle specialists are not eligible in folds with too few positive validation rows. Confirm stability on a later live period before production promotion.",
+   "calibration_policy":{"method":"segment-wise multiplicative ratio calibration","fit_data":"current fold validation block only, using the validation-routed model","shrinkage_prior_rows":CALIBRATION_PRIOR_ROWS,"factor_clip":[CALIBRATION_MIN_FACTOR,CALIBRATION_MAX_FACTOR],"test_isolation":"test targets are never used to estimate correction factors"},
+   "caveats":"Calibration factors are estimated from each fold's validation predictions and shrunk toward 1. They are not fitted on test outcomes. Compare calibrated MAE, RMSE, WAPE and bias against the uncalibrated gated challenger; calibration may reduce bias while worsening MAE. Confirm on a later live period before production promotion.",
    "generated_at_utc":datetime.now(timezone.utc).isoformat()}
   outputs={"segment_rolling_backtest_report.json":report,"segment_rolling_backtest_folds.csv":fdf,
-   "segment_rolling_backtest_selection.csv":sdf,"segment_rolling_backtest_predictions.csv":pdf}
+   "segment_rolling_backtest_selection.csv":sdf,"segment_rolling_backtest_predictions.csv":pdf,
+   "segment_rolling_backtest_calibration.csv":pd.DataFrame(calibration_audit)}
   for name,obj in outputs.items():
    path=root/name
    if name.endswith(".csv"): obj.to_csv(path,index=False); ctype="text/csv"
