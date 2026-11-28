@@ -3,7 +3,7 @@ name: Stochastic Inventory Optimization Benchmark
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, feat/stochastic-inventory-ts-research]
     paths:
       - "scripts/optimize_inventory.py"
       - ".github/workflows/stochastic-inventory-optimization.yml"
