@@ -4,7 +4,12 @@ import json
 import os
 from pathlib import Path
 
+import sys
+
 from fastapi import HTTPException
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 from api.main import StakeholderBriefRequest, generate_stakeholder_brief
 

@@ -18,6 +18,7 @@ on:
       - main
     paths:
       - ".github/workflows/stakeholder-brief-smoke-test.yml"
+      - "scripts/smoke_test_stakeholder_brief.py"
 
 permissions:
   contents: read
