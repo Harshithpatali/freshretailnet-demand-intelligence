@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -348,6 +347,7 @@ def main() -> None:
         stl_spectral, diagnostics = build_stl_spectral_features(history, STL_WINDOW, 7)
         stl_wave_input = history.rename(columns={"date": "date"})
         wavelet = build_wavelet_features(stl_wave_input, wavelet_name="db2")
+        wavelet["date"] = pd.to_datetime(wavelet["date"])
         print(f"Joining leakage-safe feature families: STL/spectral={len(stl_spectral):,}, wavelet={len(wavelet):,}")
 
         frame = base.merge(stl_spectral, on=["store_id", "product_id", "date"], how="inner", validate="one_to_one")
@@ -530,8 +530,7 @@ def main() -> None:
             ],
         }
 
-        input_path = root / "evaluation_quantile_predictions.csv"
-        # Data provenance records the public model prediction artifact used for comparison,
+        # Data provenance records the raw source Parquet inputs used for comparison,
         # while source Parquet hashes are recorded by its stable R2 object key.
         raw_train = root / "train.parquet"
         raw_eval = root / "eval.parquet"
