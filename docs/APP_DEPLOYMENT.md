@@ -68,6 +68,22 @@ streamlit run app.py
 - `GET /api/v1/stockout`, `/stockout/buckets`, `/stockout/hourly`
 - `GET /api/v1/inventory`, `/inventory/series`, `/inventory/sensitivity`
 
+## Advanced research API routes
+
+The service-level inventory decision engine exposes:
+- `GET /api/v1/inventory/optimizer` (scenario summary, source cohort and optimizer provenance)
+- `GET /api/v1/inventory/optimizer/stores?scenario=balanced_90pct` (store-level service feasibility and capacity use)
+- `GET /api/v1/inventory/optimizer/decisions?scenario=balanced_90pct&store_id=...` (SKU order recommendations)
+
+The time-series research benchmark exposes:
+- `GET /api/v1/forecast-research/summary` (rolling design, methods, final comparison, bootstrap and ensemble weights)
+- `GET /api/v1/forecast-research/rolling-comparison`
+- `GET /api/v1/forecast-research/final-comparison`
+
+These routes return HTTP 503 until the corresponding GitHub Actions workflow has
+published its R2 artifacts. The research endpoints return experimental results, not
+production-promoted policies or independently validated latent demand.
+
 ## Interpretation and limitations
 
 Forecast targets are observed sales, not guaranteed uncensored demand. Stockout bucket comparisons are descriptive, not causal lost-sales estimates. The current evaluation interval coverage is below the nominal 80% target. Inventory costs and service levels are conditional on configurable simulation assumptions, a short held-out horizon and the observed-sales proxy.
