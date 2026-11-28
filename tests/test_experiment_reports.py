@@ -49,12 +49,15 @@ def test_monitoring_emits_error_coverage_drift_and_alerts():
         "p10_calibrated": [8.0] * 20, "p90_calibrated": [12.0] * 20,
         "stock_hour6_22_cnt": [0] * 10 + [8] * 10,
     })
-    report, daily, drift = build_monitoring_report(frame)
+    report, daily, drift, exposure, time_exposure = build_monitoring_report(frame)
     assert report["overall"]["rows"] == 20
     assert report["overall"]["mae"] > 0
     assert len(daily) == 4
     assert "stockout_hours_06_22" in set(drift["variable"])
     assert report["alert_count"] >= 1
+    assert {"stockout_exposure_bucket", "calibrated_coverage_pct", "rows"}.issubset(exposure.columns)
+    assert {"date", "stockout_exposure_bucket", "calibrated_coverage_pct"}.issubset(time_exposure.columns)
+    assert len(exposure) == 6
 
 
 def test_bootstrap_returns_paired_cluster_intervals():
