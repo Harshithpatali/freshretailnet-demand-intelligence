@@ -409,8 +409,6 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
 
 
 def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
-    import os
-
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     monkeypatch.setattr(
         api, "_stakeholder_evidence",
