@@ -145,6 +145,10 @@ def main():
         )
         results["demand_proxy"] = "observed sale_amount; may be censored by stock availability"
         results["simulation_type"] = "assumption-driven backtest; not measured operating savings"
+        json_results = results.replace(
+            [float("inf"), float("-inf")], float("nan")
+        ).astype(object)
+        json_results = json_results.where(pd.notna(json_results), None)
         summary = {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "provenance": provenance,
@@ -156,7 +160,7 @@ def main():
             "scenario_count": int(results["scenario"].nunique()),
             "policy_scenario_rows": int(len(results)),
             "scenarios": list(SCENARIOS),
-            "results": results.to_dict(orient="records"),
+            "results": json_results.to_dict(orient="records"),
             "interpretation": (
                 "Compare fill rate and simulated cost under the same observed-sales proxy. "
                 "Capacity is scaled to each series' mean forecast; pack size and minimum order "
@@ -175,7 +179,7 @@ def main():
         csv_path = root / "inventory_scenario_comparison.csv"
         json_path = root / "inventory_scenario_summary.json"
         results.to_csv(csv_path, index=False)
-        json_path.write_text(json.dumps(summary, indent=2, default=str))
+        json_path.write_text(json.dumps(summary, indent=2, default=str, allow_nan=False))
         uploads = [
             (csv_path, "inventory-scenario-artifacts/inventory_scenario_comparison.csv", "text/csv"),
             (json_path, "inventory-scenario-artifacts/inventory_scenario_summary.json", "application/json"),
