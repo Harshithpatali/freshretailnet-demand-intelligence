@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.simulate_inventory import simulate, aggregate
+from scripts.artifact_provenance import build_provenance, upload_versioned_artifact
 
 POLICIES = (
     ("seasonal_naive_lag7", "seasonal_naive_lag7"),
@@ -125,10 +126,28 @@ def main():
             raise RuntimeError("Duplicate store-product-date rows in quantile predictions")
         frame = frame.sort_values(["store_id", "product_id", "date"])
         results = run_scenarios(frame)
+        output_keys = [
+            "inventory-scenario-artifacts/inventory_scenario_comparison.csv",
+            "inventory-scenario-artifacts/inventory_scenario_summary.json",
+        ]
+        configuration = {
+            "lead_review_scenarios": list(SCENARIOS),
+            "policies": [policy for _, policy in POLICIES],
+            "base_costs": {"holding_per_unit_day": 0.05, "shortage_per_unit": 2.0, "order_per_order": 5.0},
+            "shortage_penalty_multipliers": [0.5, 1.0, 2.0],
+            "demand_proxy": "observed sale_amount; may be stockout censored",
+        }
+        provenance = build_provenance(
+            "Inventory Lead-Time and Constraint Scenario Backtest",
+            {"quantile-model-artifacts/evaluation_quantile_predictions.csv": source},
+            str(frame["date"].min().date()), str(frame["date"].max().date()),
+            configuration, outputs=output_keys,
+        )
         results["demand_proxy"] = "observed sale_amount; may be censored by stock availability"
         results["simulation_type"] = "assumption-driven backtest; not measured operating savings"
         summary = {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "provenance": provenance,
             "source_key": "quantile-model-artifacts/evaluation_quantile_predictions.csv",
             "evaluation_rows": int(len(frame)),
             "store_product_series": int(frame[["store_id", "product_id"]].drop_duplicates().shape[0]),
@@ -162,11 +181,15 @@ def main():
             (json_path, "inventory-scenario-artifacts/inventory_scenario_summary.json", "application/json"),
         ]
         for path, key, content_type in uploads:
-            s3.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": content_type})
-            size = s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
-            if size != path.stat().st_size:
-                raise RuntimeError(f"R2 verification failed for {key}")
-            print(f"Verified s3://{bucket}/{key} ({size:,} bytes)")
+            destinations = upload_versioned_artifact(s3, bucket, path, key, content_type, provenance)
+            print(f"Published stable and immutable copies: {destinations[0]} ; {destinations[1]}")
+        manifest_path = root / "inventory_scenario_manifest.json"
+        manifest_path.write_text(json.dumps(provenance, indent=2, sort_keys=True))
+        upload_versioned_artifact(
+            s3, bucket, manifest_path,
+            "inventory-scenario-artifacts/inventory_scenario_manifest.json",
+            "application/json", provenance,
+        )
         print(results.to_string(index=False))
 
 
