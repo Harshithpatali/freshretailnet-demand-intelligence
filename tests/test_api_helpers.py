@@ -332,3 +332,93 @@ def test_groq_authentication_error_is_reported_as_configuration_issue():
     response = api._groq_http_exception(error, "openai/gpt-oss-120b")
     assert response.status_code == 503
     assert "GROQ_API_KEY" in response.detail["action"]
+
+
+
+def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_segments():
+    raw = {
+        "inventory_optimizer": {
+            "evaluation_population": {"target_dates": 70, "complete_continuous_series": 2600},
+            "scenario_results": [
+                {"scenario": f"scenario-{i}", "empirical_fill_rate": 0.8, "items": ["x"] * 1000}
+                for i in range(3)
+            ],
+            "capacity_diagnostics": [{
+                "scenario": "balanced_90pct",
+                "replenishment_utilization_pct": {
+                    "p50": 90, "p90": 99, "p95": 100, "max": 100,
+                    "share_at_least_95_pct": 60, "share_at_least_99_pct": 30,
+                    "raw_store_rows": ["x"] * 2000,
+                },
+                "storage_utilization_pct": {"p50": 40, "p90": 90, "p95": 99, "max": 100},
+                "by_store_size": [
+                    {"store_size_segment": s, "stores": 10, "debug": ["x"] * 1000}
+                    for s in ("small", "medium", "large")
+                ],
+            }],
+            "segment_results": [
+                {"scenario": "balanced_90pct", "segment_type": typ, "segment": seg,
+                 "empirical_fill_rate": 0.8, "debug": ["x"] * 1000}
+                for typ, seg in [
+                    ("store_size", "small"), ("store_size", "medium"), ("store_size", "large"),
+                    ("sku_demand", "low"), ("sku_demand", "medium"), ("sku_demand", "high"),
+                ]
+            ],
+            "distribution_diagnostics": {
+                "reference_optimizer_distribution": "moment_lognormal",
+                "challengers": ["empirical_bootstrap", "conformal_residual"],
+                "results": [
+                    {"segment_type": "overall", "distribution": name, "median_mae": .2, "debug": ["x"] * 500}
+                    for name in ("moment_lognormal", "empirical_bootstrap", "conformal_residual")
+                ] + [{"segment_type": "demand_segment", "debug": ["x"] * 500} for _ in range(20)],
+            },
+            "limitations": ["one", "two"],
+        },
+        "forecast_research": {
+            "series_sample_size_complete": 3000,
+            "rolling_design": {
+                "folds": [{"feature_gain": ["x"] * 5000}],
+                "pooled_test_metrics": [{"model": "baseline", "mae": .4, "debug": ["x"] * 5000}],
+            },
+            "final_research_comparison": {
+                "evaluation_period": ["2024-06-26", "2024-07-02"],
+                "evaluation_rows": 21000,
+                "metrics": [{"model": "baseline", "mae": .4, "debug": ["x"] * 5000}],
+                "ensemble_weights": {"residual_corrected": .65, "spectral": .35},
+                "bootstrap_vs_baseline": {
+                    "comparisons_vs_baseline": {
+                        "residual_corrected": {
+                            "mae": {"mean_improvement_pct": 5.0, "debug": ["x"] * 5000}
+                        }
+                    }
+                },
+                "wavelet_ablation_vs_spectral": {"comparisons_vs_baseline": {"wavelet": {}}},
+            },
+            "limitations": ["not untouched", "observed sales"],
+        },
+    }
+    compact = api._compact_stakeholder_evidence(raw)
+    encoded = __import__("json").dumps(compact, separators=(",", ":"))
+
+    assert len(compact["inventory_optimizer"]["balanced_scenario_segments"]) == 6
+    assert len(compact["inventory_optimizer"]["distribution_comparison"]["overall_scores"]) == 3
+    assert "debug" not in encoded
+    assert "feature_gain" not in encoded
+    assert "raw_store_rows" not in encoded
+    assert len(encoded) < 7000
+
+
+def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
+    import os
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr(
+        api, "_stakeholder_evidence",
+        lambda: ({"inventory_optimizer": {}, "forecast_research": {}}, ["inventory.json"], []),
+    )
+    monkeypatch.setattr(api, "_compact_stakeholder_evidence", lambda _raw: {"payload": "x" * 15000})
+    request = api.StakeholderBriefRequest(audience="Executive leadership", focus="Summarize results.")
+    with pytest.raises(HTTPException) as exc:
+        api.generate_stakeholder_brief(request)
+    assert exc.value.status_code == 413
+    assert exc.value.detail["code"] == "stakeholder_prompt_too_large"
