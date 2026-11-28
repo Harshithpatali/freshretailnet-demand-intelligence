@@ -363,10 +363,9 @@ def optimize_network(
         if column not in data:
             data[column] = default
         data[column] = pd.to_numeric(data[column], errors="raise")
-    daily_mean = data.groupby("store_id", sort=False).demand_mean.transform(
-        lambda values: float(values.sum()) / protection_days
-    )
-    data["max_order_qty"] = daily_mean * 0 + (
+    # Optimizer holding input is per unit per day; each plan covers the protection period.
+    data["unit_holding_cost"] = data["unit_holding_cost"] * protection_days
+    data["max_order_qty"] = (
         data["demand_mean"] / protection_days * max_order_days_per_sku
     )
     all_decisions = []
