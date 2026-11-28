@@ -37,20 +37,38 @@ def compact_table(frame, height=300):
 
 st.title("FreshRetailNet Demand Intelligence")
 st.caption("Observed-sales forecasting · stockout diagnostics · probabilistic intervals · inventory policy simulation")
+overview = {}
+health = {}
 try:
     health = get_json("/health")
-    if not health.get("r2_configured"):
-        st.warning("The API is reachable, but R2 credentials are not configured on the API service.")
-        st.stop()
-    overview = get_json("/api/v1/overview")
 except Exception as exc:
-    st.error(f"Could not load the API at {API}. Verify API_BASE_URL and API deployment. Details: {exc}")
+    st.error(f"Could not reach the FastAPI service at {API}. Check API_BASE_URL and the API deployment. Details: {exc}")
     st.stop()
 
-point = overview["point_forecast"]
-quant = overview["quantile_forecast"]
-stock = overview["stockout"]
-inventory = overview["inventory"]
+if not health.get("r2_configured"):
+    st.warning("The API is alive, but R2 credentials are not configured. Artifact-backed panels will show their own availability messages.")
+else:
+    try:
+        overview = get_json("/api/v1/overview")
+    except Exception as exc:
+        st.warning(f"The API is reachable, but the overview could not be loaded. Individual panels may still work: {exc}")
+        overview = {}
+
+artifact_status = overview.get("artifact_status", {})
+unavailable_overview = [
+    name for name, state in artifact_status.items() if not state.get("available", False)
+]
+if unavailable_overview:
+    st.warning(
+        "Some overview artifacts are unavailable: "
+        + ", ".join(unavailable_overview)
+        + ". Other dashboard sections remain available."
+    )
+
+point = overview.get("point_forecast") or {}
+quant = overview.get("quantile_forecast") or {}
+stock = overview.get("stockout") or {}
+inventory = overview.get("inventory") or {}
 freshness = {
     "Point forecast": point.get("generated_at_utc"),
     "Quantile forecast": quant.get("generated_at_utc"),
@@ -97,14 +115,46 @@ with tabs[1]:
     except Exception as exc:
         filters = None
         st.warning(f"Forecast filters are unavailable: {exc}")
-    series_options = filters.get("series", []) if filters else []
-    if series_options:
-        labels = [f"Store {x['store_id']} · Product {x['product_id']}" for x in series_options]
-        selected = st.selectbox("Select one store-product series", range(len(labels)), format_func=lambda i: labels[i])
-        chosen = series_options[selected]
-        st.caption(f"Selected series: store {chosen['store_id']} / product {chosen['product_id']}")
+    if filters:
+        with st.form("forecast_series_search_form"):
+            search_store = st.text_input("Store ID contains", key="forecast_store_search_input")
+            search_product = st.text_input("Product ID contains", key="forecast_product_search_input")
+            search_submit = st.form_submit_button("Search store-product series")
+        if search_submit:
+            st.session_state["forecast_store_search"] = search_store.strip()
+            st.session_state["forecast_product_search"] = search_product.strip()
+            st.session_state["forecast_series_page"] = 1
+        search_page = st.number_input(
+            "Results page", min_value=1,
+            value=int(st.session_state.get("forecast_series_page", 1)),
+            step=1, key="forecast_series_page",
+        )
+        try:
+            series_result = get_json("/api/v1/series/search", {
+                "store_id": st.session_state.get("forecast_store_search", ""),
+                "product_id": st.session_state.get("forecast_product_search", ""),
+                "offset": (int(search_page) - 1) * 50,
+                "limit": 50,
+            })
+            series_options = series_result.get("rows", [])
+            st.caption(
+                f"{series_result.get('total', 0):,} matching series · "
+                f"showing page {int(search_page)} of "
+                f"{max(1, (series_result.get('total', 0) + 49) // 50)}"
+            )
+            if series_options:
+                labels = [f"Store {x['store_id']} · Product {x['product_id']}" for x in series_options]
+                selected = st.selectbox("Select a result on this page", range(len(labels)),
+                                        format_func=lambda i: labels[i], key="forecast_series_selection")
+                chosen = series_options[selected]
+                st.caption(f"Selected series: store {chosen['store_id']} / product {chosen['product_id']}")
+            else:
+                chosen = None
+                st.info("No series on this page. Change the search filters or select an earlier page.")
+        except Exception as exc:
+            chosen = None
+            st.warning(f"Server-side series search is unavailable: {exc}")
     else:
-        st.warning("The API has not returned the available store-product pairs. Redeploy the API before using this explorer.")
         chosen = None
     start = st.text_input("Start date (YYYY-MM-DD)", filters["dates"]["start"] if filters else "")
     end = st.text_input("End date (YYYY-MM-DD)", filters["dates"]["end"] if filters else "")
@@ -259,12 +309,39 @@ with tabs[6]:
     except Exception as exc:
         exp_filters = {}
         st.warning(f"Experiment inputs are unavailable: {exc}")
-    exp_series = exp_filters.get("series", [])
+    if exp_filters:
+        with st.form("experiment_series_search_form"):
+            exp_store_search = st.text_input("Store ID contains", key="experiment_store_search_input")
+            exp_product_search = st.text_input("Product ID contains", key="experiment_product_search_input")
+            exp_search_submit = st.form_submit_button("Search experimental series")
+        if exp_search_submit:
+            st.session_state["experiment_store_search"] = exp_store_search.strip()
+            st.session_state["experiment_product_search"] = exp_product_search.strip()
+            st.session_state["experiment_series_page"] = 1
+        exp_page = st.number_input(
+            "Experimental series page", min_value=1,
+            value=int(st.session_state.get("experiment_series_page", 1)),
+            step=1, key="experiment_series_page",
+        )
+        try:
+            exp_series_result = get_json("/api/v1/series/search", {
+                "store_id": st.session_state.get("experiment_store_search", ""),
+                "product_id": st.session_state.get("experiment_product_search", ""),
+                "offset": (int(exp_page) - 1) * 50, "limit": 50,
+            })
+            exp_series = exp_series_result.get("rows", [])
+        except Exception as exc:
+            exp_series = []
+            st.warning(f"Server-side experiment series search failed: {exc}")
+    else:
+        exp_series = []
     if not exp_series:
-        st.warning("No evaluation series are available from the API.")
+        st.warning("No matching evaluation series. Search with a different store or product ID.")
+        exp_chosen = None
     else:
         exp_labels = [f"Store {x['store_id']} · Product {x['product_id']}" for x in exp_series]
-        exp_idx = st.selectbox("Experimental series", range(len(exp_labels)), format_func=lambda i: exp_labels[i], key="exp_series")
+        exp_idx = st.selectbox("Experimental series (current page)", range(len(exp_labels)),
+                               format_func=lambda i: exp_labels[i], key="exp_series")
         exp_chosen = exp_series[exp_idx]
         p1, p2, p3 = st.columns(3)
         with p1:
