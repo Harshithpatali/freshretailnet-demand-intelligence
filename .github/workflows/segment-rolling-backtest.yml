@@ -6,6 +6,8 @@ on:
     paths:
       - "experiments/demand_intelligence/segment_rolling_backtest.py"
       - "experiments/demand_intelligence/cluster_bootstrap_report.py"
+      - "scripts/artifact_provenance.py"
+      - "scripts/feature_availability_audit.py"
       - "src/train_model.py"
       - ".github/workflows/segment-rolling-backtest.yml"
 
