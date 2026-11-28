@@ -14,6 +14,8 @@ from botocore.config import Config
 
 ROOT=Path(__file__).resolve().parents[2]; sys.path.insert(0,str(ROOT))
 from src.train_model import RAW, env, load_features_from_frame
+from scripts.feature_availability_audit import target_calendar_feature_audit, DETERMINISTIC_TARGET_DATE_FEATURES
+from scripts.artifact_provenance import build_provenance, upload_versioned_artifact
 
 OUT="segment-rolling-backtest-artifacts"
 GROUP=["store_id","product_id"]
@@ -129,9 +131,11 @@ def main():
   combined=pl.concat([raw["train"],raw["eval"]],how="diagonal_relaxed").sort(GROUP+["dt"])
   frame=add_segments(load_features_from_frame(combined))
   # Keep origin-date calendar fields intact for production-baseline parity.
-  # Target-date fields get explicit names so they cannot collide with origin features.
-  calcols=[c for c in ["holiday_flag","activity_flag"] if c in combined.columns]
-  target_cal_cols=[f"target_{c}" for c in calcols]
+  # Only deterministic date transforms are available without an external
+  # forecast-time calendar contract. Dataset-supplied future flags are excluded.
+  calendar_availability_audit=target_calendar_feature_audit(combined.columns)
+  calcols=[]
+  target_cal_cols=[]
   if calcols:
    cal=combined.select(
     [pl.col(c) for c in GROUP]+
@@ -348,7 +352,9 @@ def main():
    "segment_test_metrics":segment_test_metrics,"selection_diagnostics":stability,
    "fold_audit":audits,"selection_details":selection_rows,
    "segment_strategy":{"smooth":"LightGBM regression","erratic":"Huber LightGBM","lumpy":"occurrence classifier x positive-size regressor","intermittent":"occurrence classifier x positive-size regressor"},
-   "calendar_features":target_cal_cols,"calendar_policy":"Only explicitly named target-date calendar flags are specialist-only; original origin-date flags remain in the production baseline. Verify target flags are available before forecast time.",
+   "calendar_features":list(DETERMINISTIC_TARGET_DATE_FEATURES),
+   "calendar_availability_audit":calendar_availability_audit,
+   "calendar_policy":"Target-date holiday_flag and activity_flag values from the dataset are excluded because their publication time is not documented. Only deterministic date transforms are used for the future target date.",
    "calibration_policy":{"method":"segment-wise multiplicative ratio calibration","fit_data":"current fold validation block only, using the validation-routed model","shrinkage_prior_rows":CALIBRATION_PRIOR_ROWS,"factor_clip":[CALIBRATION_MIN_FACTOR,CALIBRATION_MAX_FACTOR],"test_isolation":"test targets are never used to estimate correction factors"},
    "caveats":"Calibration factors are estimated from each fold's validation predictions and shrunk toward 1. They are not fitted on test outcomes. Compare calibrated MAE, RMSE, WAPE and bias against the uncalibrated gated challenger; calibration may reduce bias while worsening MAE. Confirm on a later live period before production promotion.",
    "uncertainty_methodology":"Computed by the separate post-hoc paired cluster bootstrap workflow after predictions are saved; no intervals are computed in the model-training job.",
