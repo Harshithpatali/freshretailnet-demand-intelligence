@@ -12,7 +12,6 @@ must not be represented as full-population evidence.
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -392,7 +391,6 @@ def main() -> None:
             ("spectral_no_wavelet_lightgbm", spectral_no_wavelet_features),
             ("spectral_wavelet_lightgbm", full_features),
         ]
-        y_validation = valid["sale_amount"].to_numpy(dtype=float)
         y_evaluation = evaluation["sale_amount"].to_numpy(dtype=float)
         for name, feature_cols in model_specs:
             model, valid_pred, evaluation_pred = fit_lightgbm(
