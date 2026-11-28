@@ -221,11 +221,9 @@ def optimize_store(
     variable_cursor = 0
 
     for row_idx, item in enumerate(products):
-        option_sum = 0
         for option in item["options"]:
             rows.append(row_idx); cols.append(variable_cursor); values.append(1.0)
             objective[variable_cursor] = option["expected_cost"]
-            option_sum += 1
             variable_cursor += 1
         lower[row_idx] = 1.0
         upper[row_idx] = 1.0
@@ -233,12 +231,10 @@ def optimize_store(
     capacity_row = len(products)
     service_row = capacity_row + 1
     variable_cursor = 0
-    fulfilled_coefficients = []
     for item in products:
         for option in item["options"]:
             rows.append(capacity_row); cols.append(variable_cursor); values.append(option["order_qty"])
             rows.append(service_row); cols.append(variable_cursor); values.append(option["expected_fulfilled_units"])
-            fulfilled_coefficients.append(option["expected_fulfilled_units"])
             variable_cursor += 1
     rows.append(service_row); cols.append(slack_idx); values.append(1.0)
     upper[capacity_row] = capacity_units
