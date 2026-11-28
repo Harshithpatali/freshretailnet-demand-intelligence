@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "scripts/inventory_scenario_backtest.py"
+      - "scripts/artifact_provenance.py"
       - "src/simulate_inventory.py"
       - ".github/workflows/inventory-scenario-backtest.yml"
 
