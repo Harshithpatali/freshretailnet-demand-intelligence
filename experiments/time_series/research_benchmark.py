@@ -127,8 +127,8 @@ def build_stl_spectral_features(
             ])
         stl_array = np.asarray(stl_values, dtype=float)
         features = pd.DataFrame({
-            "store_id": str(store),
-            "product_id": str(product),
+            "store_id": store,
+            "product_id": product,
             "date": pd.to_datetime(dates[window:]),
             "stl_trend_last": stl_array[:, 0],
             "stl_trend_slope_7": stl_array[:, 1],
