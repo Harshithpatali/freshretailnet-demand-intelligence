@@ -31,19 +31,46 @@ def r2_client():
     )
 
 def simulate(frame, forecast_col, policy_label, lead_time, review_period, holding_cost,
-             shortage_cost, order_cost, initial_stock):
-    """Periodic-review order-up-to simulation with explicit warm-up and horizon handling."""
+             shortage_cost, order_cost, initial_stock, storage_capacity=None,
+             min_order_qty=0.0, pack_size=1.0, max_order_qty=None,
+             storage_capacity_days=None, max_order_qty_days=None):
+    """Periodic-review simulation with optional storage, MOQ, pack and order-cap constraints.
+
+    Capacity/order caps expressed in days are scaled by each series' mean forecast,
+    making the scenario comparable across different sales scales. All constraints
+    are explicit simulation assumptions, not measured store capabilities.
+    """
+    if lead_time < 1 or review_period < 1:
+        raise ValueError("lead_time and review_period must be >= 1")
+    if min(holding_cost, shortage_cost, order_cost, initial_stock, min_order_qty) < 0:
+        raise ValueError("Costs, initial_stock and min_order_qty must be non-negative")
+    if pack_size <= 0:
+        raise ValueError("pack_size must be > 0")
+    if storage_capacity is not None and storage_capacity < 0:
+        raise ValueError("storage_capacity must be non-negative")
+    if max_order_qty is not None and max_order_qty < 0:
+        raise ValueError("max_order_qty must be non-negative")
     rows = []
     for (store, product), g in frame.groupby(["store_id", "product_id"], sort=False):
         g = g.sort_values("date").reset_index(drop=True)
         n = len(g)
         actual = g["actual_sale_amount"].to_numpy(dtype=float)
         forecast = np.maximum(g[forecast_col].to_numpy(dtype=float), 0.0)
+        mean_forecast = float(np.mean(forecast)) if len(forecast) else 0.0
+        series_capacity = storage_capacity
+        if storage_capacity_days is not None:
+            series_capacity = mean_forecast * float(storage_capacity_days)
+        series_max_order = max_order_qty
+        if max_order_qty_days is not None:
+            series_max_order = mean_forecast * float(max_order_qty_days)
         inventory = float(initial_stock)
+        if series_capacity is not None:
+            inventory = min(inventory, float(series_capacity))
         pipeline = {}
         totals = {"units_ordered": 0.0, "orders_placed": 0, "orders_suppressed": 0,
                   "units_suppressed": 0.0, "shortage": 0.0, "holding": 0.0,
-                  "ordering": 0.0, "fulfilled": 0.0}
+                  "ordering": 0.0, "fulfilled": 0.0,
+                  "constraint_limited_units": 0.0, "constraint_limited_orders": 0}
         steady = {k: 0.0 for k in totals}
         warmup_days = min(lead_time, n)
         for i in range(n):
@@ -52,7 +79,26 @@ def simulate(frame, forecast_col, policy_label, lead_time, review_period, holdin
                 horizon_end = min(n, i + lead_time + review_period)
                 protection_demand = float(forecast[i:horizon_end].sum())
                 inventory_position = inventory + float(sum(pipeline.values()))
-                qty = float(np.ceil(max(0.0, protection_demand - inventory_position)))
+                requested_qty = float(np.ceil(max(0.0, protection_demand - inventory_position)))
+                qty = requested_qty
+                if qty > 0:
+                    qty = float(np.ceil(max(qty, min_order_qty) / pack_size) * pack_size)
+                    if series_max_order is not None:
+                        max_feasible = np.floor(float(series_max_order) / pack_size) * pack_size
+                        qty = min(qty, max_feasible)
+                    if series_capacity is not None:
+                        free_capacity = max(0.0, float(series_capacity) - inventory_position)
+                        capacity_feasible = np.floor(free_capacity / pack_size) * pack_size
+                        qty = min(qty, capacity_feasible)
+                    if 0 < qty < min_order_qty:
+                        qty = 0.0
+                    limited = max(0.0, requested_qty - qty)
+                    if limited > 0:
+                        totals["constraint_limited_units"] += limited
+                        totals["constraint_limited_orders"] += 1
+                        if i >= warmup_days:
+                            steady["constraint_limited_units"] += limited
+                            steady["constraint_limited_orders"] += 1
                 if qty > 0:
                     arrival_day = i + lead_time
                     if arrival_day < n:
@@ -109,6 +155,14 @@ def simulate(frame, forecast_col, policy_label, lead_time, review_period, holdin
             "steady_state_shortage_cost": steady_shortage_cost,
             "steady_state_ordering_cost": steady["ordering"],
             "steady_state_total_cost": steady_cost,
+            "constraint_limited_units": totals["constraint_limited_units"],
+            "constraint_limited_orders": totals["constraint_limited_orders"],
+            "steady_state_constraint_limited_units": steady["constraint_limited_units"],
+            "steady_state_constraint_limited_orders": steady["constraint_limited_orders"],
+            "storage_capacity_units": series_capacity,
+            "min_order_qty": float(min_order_qty),
+            "pack_size": float(pack_size),
+            "max_order_qty_units": series_max_order,
         })
     return pd.DataFrame(rows)
 
