@@ -18,7 +18,7 @@ from src.train_model import RAW, env, load_features_from_frame
 OUT="segment-rolling-backtest-artifacts"
 GROUP=["store_id","product_id"]
 HORIZONS=(1,7,14)
-FOLDS=5
+FOLDS=int(os.getenv("ROLLING_FOLDS","5"))
 BLOCK_DAYS=7
 BOOTSTRAP_REPS=500
 BOOTSTRAP_SEED=20261128
