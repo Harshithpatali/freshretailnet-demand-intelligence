@@ -245,7 +245,7 @@ with tabs[5]:
         else:
             st.info("No SQL EDA results have been published yet. Run the FreshRetailNet SQL EDA workflow in GitHub Actions.")
         st.info(eda.get("source_semantics", "Observed sales may be censored by stock availability; this is descriptive EDA."))
-    except requests.HTTPError as exc:
+    except requests.HTTPError:
         st.warning("SQL EDA results are not published yet. Run the FreshRetailNet SQL EDA workflow in GitHub Actions, then refresh this page.")
     except Exception as exc:
         st.error(f"Could not load SQL EDA results: {exc}")
