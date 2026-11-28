@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "scripts/demand_censoring_sensitivity.py"
+      - "scripts/artifact_provenance.py"
       - ".github/workflows/demand-censoring-sensitivity.yml"
 
 concurrency:
