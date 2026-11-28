@@ -1,6 +1,6 @@
 """Read-only API for FreshRetailNet forecasting and inventory artifacts."""
 from __future__ import annotations
-import io, os
+import io, math, os, time
 from functools import lru_cache
 from typing import Any
 import boto3
@@ -24,16 +24,47 @@ def _client():
         aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"], region_name="auto",
         config=Config(signature_version="s3v4", retries={"max_attempts": 4, "mode": "standard"}))
 
+CACHE_TTL_SECONDS = max(1, int(os.getenv("ARTIFACT_CACHE_TTL_SECONDS", "300")))
+
+
+def _json_safe(value):
+    """Replace non-finite JSON values with null before FastAPI serialization."""
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
 @lru_cache(maxsize=16)
-def _read_json(key: str) -> dict[str, Any]:
+def _read_json_cached(key: str, cache_epoch: int) -> dict[str, Any]:
     obj = _client().get_object(Bucket=os.environ["R2_BUCKET"], Key=key)
     import json
-    return json.loads(obj["Body"].read())
+    return _json_safe(json.loads(obj["Body"].read()))
+
+
+def _read_json(key: str) -> dict[str, Any]:
+    epoch = int(time.time() // CACHE_TTL_SECONDS)
+    return _read_json_cached(key, epoch)
+
 
 @lru_cache(maxsize=8)
-def _read_csv(key: str) -> pd.DataFrame:
+def _read_csv_cached(key: str, cache_epoch: int) -> pd.DataFrame:
     obj = _client().get_object(Bucket=os.environ["R2_BUCKET"], Key=key)
     return pd.read_csv(io.BytesIO(obj["Body"].read()))
+
+
+def _read_csv(key: str) -> pd.DataFrame:
+    epoch = int(time.time() // CACHE_TTL_SECONDS)
+    return _read_csv_cached(key, epoch).copy()
+
+
+def clear_artifact_caches() -> None:
+    """Clear local API artifact caches; TTL remains the normal refresh mechanism."""
+    _read_json_cached.cache_clear()
+    _read_csv_cached.cache_clear()
 
 def _safe_json(key: str):
     try:
@@ -56,28 +87,53 @@ def _require_columns(frame: pd.DataFrame, key: str, required: set[str]) -> pd.Da
         )
     return frame
 
-def _require_columns(frame: pd.DataFrame, key: str, required: set[str]) -> pd.DataFrame:
-    missing = sorted(required - set(frame.columns))
-    if missing:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Artifact schema mismatch: {key} is missing columns {missing}. Republish the artifact.",
-        )
-    return frame
-
 @app.get("/health")
 def health():
-    configured = all(os.getenv(k) for k in ("R2_ACCOUNT_ID","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY","R2_BUCKET"))
-    return {"status": "ok", "r2_configured": configured}
+    """Liveness endpoint; it does not depend on R2 availability."""
+    configured = all(os.getenv(k) for k in (
+        "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"
+    ))
+    return {
+        "status": "ok",
+        "r2_configured": configured,
+        "artifact_cache_ttl_seconds": CACHE_TTL_SECONDS,
+    }
+
+
+@app.get("/ready")
+def readiness():
+    """Readiness endpoint that verifies the configured R2 bucket is reachable."""
+    try:
+        _client().head_bucket(Bucket=os.environ["R2_BUCKET"])
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="R2 bucket is not reachable from the API service.") from exc
+    return {"status": "ready", "r2_reachable": True}
+
 
 @app.get("/api/v1/overview")
 def overview():
-    return {
-        "point_forecast": _safe_json("model-artifacts/metrics.json"),
-        "quantile_forecast": _safe_json("quantile-model-artifacts/quantile_metrics.json"),
-        "inventory": _safe_json("inventory-simulation-artifacts/inventory_simulation_summary.json"),
-        "stockout": _safe_json("diagnostics/stockout/stockout_diagnostics.json"),
+    """Return available overview artifacts independently instead of failing as a group."""
+    artifact_keys = {
+        "point_forecast": "model-artifacts/metrics.json",
+        "quantile_forecast": "quantile-model-artifacts/quantile_metrics.json",
+        "inventory": "inventory-simulation-artifacts/inventory_simulation_summary.json",
+        "stockout": "diagnostics/stockout/stockout_diagnostics.json",
     }
+    payload = {}
+    status = {}
+    for name, key in artifact_keys.items():
+        try:
+            payload[name] = _safe_json(key)
+            status[name] = {"available": True, "key": key}
+        except HTTPException:
+            payload[name] = {}
+            status[name] = {
+                "available": False,
+                "key": key,
+                "message": "Artifact unavailable or unreadable. Other dashboard sections remain available.",
+            }
+    payload["artifact_status"] = status
+    return payload
 
 @app.get("/api/v1/quantile-metrics")
 def quantile_metrics():
@@ -133,14 +189,58 @@ def forecasts(store_id: str | None = None, product_id: str | None = None,
 
 @app.get("/api/v1/filters")
 def filters():
-    df = _safe_csv("quantile-model-artifacts/evaluation_quantile_predictions.csv")
-    df = _require_columns(df, "quantile-model-artifacts/evaluation_quantile_predictions.csv", {"store_id", "product_id", "date"})
-    pairs = df[["store_id", "product_id"]].astype(str).drop_duplicates().sort_values(["store_id", "product_id"])
-    return {"stores": sorted(df["store_id"].astype(str).unique().tolist()),
-            "products": sorted(df["product_id"].astype(str).unique().tolist()),
-            "series": [{"store_id": r.store_id, "product_id": r.product_id} for r in pairs.itertuples(index=False)],
-            "dates": {"start": str(df["date"].min()), "end": str(df["date"].max())},
-            "rows": int(len(df))}
+    """Return compact metadata only; do not transfer all 50,000 series to the browser."""
+    key = "quantile-model-artifacts/evaluation_quantile_predictions.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"store_id", "product_id", "date"})
+    stores = df["store_id"].astype(str)
+    products = df["product_id"].astype(str)
+    return {
+        "dates": {"start": str(df["date"].min()), "end": str(df["date"].max())},
+        "rows": int(len(df)),
+        "store_count": int(stores.nunique()),
+        "product_count": int(products.nunique()),
+        "series_count": int(df[["store_id", "product_id"]].drop_duplicates().shape[0]),
+    }
+
+
+@app.get("/api/v1/series/search")
+def search_series(
+    q: str | None = Query(None, max_length=80),
+    store_id: str | None = Query(None, max_length=80),
+    product_id: str | None = Query(None, max_length=80),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+):
+    """Search and paginate distinct store-product pairs on the API side."""
+    key = "quantile-model-artifacts/evaluation_quantile_predictions.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"store_id", "product_id"})
+    pairs = df[["store_id", "product_id"]].astype(str).drop_duplicates()
+    stores = pairs["store_id"]
+    products = pairs["product_id"]
+    if store_id:
+        pairs = pairs[stores.str.contains(store_id, case=False, regex=False, na=False)]
+    if product_id:
+        pairs = pairs[products.str.contains(product_id, case=False, regex=False, na=False)]
+    if q:
+        mask = (
+            pairs["store_id"].str.contains(q, case=False, regex=False, na=False)
+            | pairs["product_id"].str.contains(q, case=False, regex=False, na=False)
+        )
+        pairs = pairs[mask]
+    pairs = pairs.sort_values(["store_id", "product_id"])
+    total = int(len(pairs))
+    page = pairs.iloc[offset:offset + limit]
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "rows": [
+            {"store_id": row.store_id, "product_id": row.product_id}
+            for row in page.itertuples(index=False)
+        ],
+    }
 
 @app.get("/api/v1/model-metrics")
 def model_metrics():
