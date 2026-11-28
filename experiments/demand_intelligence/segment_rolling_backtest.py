@@ -413,7 +413,7 @@ def main():
   provenance=build_provenance(
    "Five-Fold Segment Specialist Rolling Backtest",
    {"raw/train.parquet":root/"train.parquet","raw/eval.parquet":root/"eval.parquet"},
-   str(pdf.target_date.min().date()),str(pdf.target_date.max().date()),
+   str(pd.to_datetime(pdf.target_date).min().date()),str(pd.to_datetime(pdf.target_date).max().date()),
    {"folds":FOLDS,"horizons_days":list(HORIZONS),"validation_block_days":BLOCK_DAYS,
     "minimum_train_dates":MIN_TRAIN_DATES,"minimum_validation_mae_gain_pct":MIN_VALIDATION_GAIN_PCT,
     "calibration_prior_rows":CALIBRATION_PRIOR_ROWS,"seed":SEED,
