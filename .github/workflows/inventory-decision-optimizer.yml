@@ -1,0 +1,41 @@
+name: Service-Level Inventory Decision Optimization
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - feat/stochastic-inventory-and-forecast-research
+    paths:
+      - "src/inventory_optimizer.py"
+      - "scripts/optimized_inventory_decision_engine.py"
+      - ".github/workflows/inventory-decision-optimizer.yml"
+
+concurrency:
+  group: inventory-decision-optimizer-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install optimizer dependencies
+        run: python -m pip install --upgrade boto3 pandas numpy scipy
+      - name: Compile optimizer and data runner
+        run: python -m py_compile src/inventory_optimizer.py scripts/optimized_inventory_decision_engine.py
+      - name: Solve service-level and capacity constrained store plans
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          SEGMENT_BACKTEST_PREFIX: freshretailnet-lt-segment-backtest-artifacts
+        run: python -u scripts/optimized_inventory_decision_engine.py
