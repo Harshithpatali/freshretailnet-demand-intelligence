@@ -400,6 +400,26 @@ def main():
    "test_folds":int(g.fold.nunique()),"target_dates":int(g.target_date.nunique())}
    for h,g in pdf.groupby("horizon_days",sort=True)]
   report["comparison_report"]="segment_rolling_backtest_comparison.csv"
+  output_names=[
+   "segment_rolling_backtest_report.json",
+   "segment_rolling_backtest_comparison.csv",
+   "segment_rolling_backtest_comparison.md",
+   "segment_rolling_backtest_folds.csv",
+   "segment_rolling_backtest_selection.csv",
+   "segment_rolling_backtest_predictions.csv",
+   "segment_rolling_backtest_calibration.csv",
+  ]
+  provenance=build_provenance(
+   "Five-Fold Segment Specialist Rolling Backtest",
+   {"raw/train.parquet":root/"train.parquet","raw/eval.parquet":root/"eval.parquet"},
+   str(pdf.target_date.min().date()),str(pdf.target_date.max().date()),
+   {"folds":FOLDS,"horizons_days":list(HORIZONS),"validation_block_days":BLOCK_DAYS,
+    "minimum_train_dates":MIN_TRAIN_DATES,"minimum_validation_mae_gain_pct":MIN_VALIDATION_GAIN_PCT,
+    "calibration_prior_rows":CALIBRATION_PRIOR_ROWS,"seed":SEED,
+    "target_calendar_policy":calendar_availability_audit},
+   outputs=[f"{OUT}/{name}" for name in output_names]+[f"{OUT}/segment_rolling_backtest_manifest.json"],
+  )
+  report["provenance"]=provenance
   outputs={"segment_rolling_backtest_report.json":report,
    "segment_rolling_backtest_comparison.csv":comparison_df,
    "segment_rolling_backtest_comparison.md":"\n".join(comparison_md)+"\n",
@@ -410,9 +430,13 @@ def main():
    path=root/name
    if name.endswith(".csv"): obj.to_csv(path,index=False); ctype="text/csv"
    else: path.write_text(json.dumps(obj,indent=2,default=str)); ctype="application/json"
-   key=f"{OUT}/{name}"; s3.upload_file(str(path),bucket,key,ExtraArgs={"ContentType":ctype})
-   if s3.head_object(Bucket=bucket,Key=key)["ContentLength"]!=path.stat().st_size: raise RuntimeError(f"R2 verification failed: {key}")
-   print(f"Verified s3://{bucket}/{key} ({path.stat().st_size:,} bytes)")
+   key=f"{OUT}/{name}"
+   destinations=upload_versioned_artifact(s3,bucket,path,key,ctype,provenance)
+   print(f"Published stable and immutable copies: {destinations[0]} ; {destinations[1]}")
+  manifest_path=root/"segment_rolling_backtest_manifest.json"
+  manifest_path.write_text(json.dumps(provenance,indent=2,sort_keys=True,default=str))
+  upload_versioned_artifact(s3,bucket,manifest_path,f"{OUT}/segment_rolling_backtest_manifest.json",
+   "application/json",provenance)
   print(json.dumps(report,indent=2,default=str))
 
 if __name__=="__main__": main()
