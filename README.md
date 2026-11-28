@@ -93,20 +93,25 @@ Quantile forecasts are evaluated with pinball loss, P10–P90 coverage, interval
 
 Rolling challenger experiments report fold-level and pooled metrics. The latest segment rolling-backtest workflow also estimates paired store-product cluster bootstrap intervals. Those intervals quantify cross-sectional cluster uncertainty, not all uncertainty due to future time-window shifts. Always inspect fold consistency and retain a later untouched period for final confirmation.
 
-### Results reporting
+### Public benchmark results
 
-Results are intentionally not hard-coded here: metrics are generated from the actual R2-backed workflow runs and can change when data, code, or evaluation windows change. Use the JSON/CSV artifacts below as the source of truth and record the run URL, commit SHA, date range, sample size, and split when publishing a result.
+The following reports publish aggregate results from successful R2-backed workflow runs. Raw predictions, model files and series-level artifacts remain in private R2.
 
-| Experiment | Primary comparison | Artifact location |
-|---|---|---|
-| Point forecast | LightGBM vs seasonal-naive lag-7 | `model-artifacts/metrics.json` |
-| Quantile forecast | P10/P50/P90, pinball loss, interval coverage | `quantile-model-artifacts/quantile_metrics.json` |
-| Wavelet experiments | Baseline vs wavelet feature families | `wavelet-experiment-artifacts/` and experiment-specific prefixes |
-| Demand segmentation | Segment and horizon comparisons | `demand-segmentation-multihorizon-artifacts/` |
-| Rolling segment specialists | Production LightGBM vs validation-gated and calibrated specialists | `segment-rolling-backtest-artifacts/segment_rolling_backtest_report.json` |
-| Inventory simulation | Policy fill rate and simulated costs | `inventory-simulation-artifacts/inventory_simulation_summary.json` |
+| Report | What it answers |
+|---|---|
+| [Point forecast benchmark](docs/results/forecast_benchmark.md) | LightGBM vs seasonal-naive lag-7, error metrics, bias, dates and row counts |
+| [Quantile evaluation](docs/results/quantile_evaluation.md) | P10/P50/P90 pinball loss, raw and calibrated coverage, interval width and stockout-exposure strata |
+| [Inventory backtest](docs/results/inventory_backtest.md) | Fill-rate vs simulated-cost trade-offs for seasonal naive, P50 and calibrated P90 policies |
+| [Segment rolling backtest](docs/results/segment_rolling_backtest.md) | 1-, 7- and 14-day challenger results, calibration and temporal-fold caveats |
+| [Consolidated experiment summary](docs/results/experiment_summary.csv) | Machine-readable summary of the published comparisons |
 
-Do not report a challenger as better based only on a single pooled metric. Include the number of test rows, number and date range of folds, segment sample sizes, uncertainty intervals, and trade-offs such as forecast bias.
+**Headline point-model result:** on the 350,000-row evaluation partition from 2024-06-26 to 2024-07-02, LightGBM achieved MAE 0.38682 versus 0.49907 for seasonal naive (22.49% lower), RMSE 0.67889 versus 0.83582, and WAPE 32.42% versus 41.83%. LightGBM bias was -5.40%, so the accuracy gain comes with an under-forecasting trade-off.
+
+**Uncertainty warning:** the conformal P10–P90 interval achieved 77.46% coverage on the held-out evaluation period versus an 80% nominal target. Validation coverage was 80.00%; do not claim nominal future coverage.
+
+**Inventory trade-off:** calibrated P90 achieved an 85.61% full-horizon observed-sales fill rate versus 78.15% for seasonal naive, but its simulated total cost was 1,126,397 versus 1,119,545 under the illustrative cost assumptions. This is a simulated policy comparison, not measured business savings.
+
+Each report identifies its workflow run, evaluation period, sample size and limitations. Re-run the workflows after changing data or code and publish a new dated report rather than silently replacing historical results. Do not compare the separate multi-horizon segment experiments with the production one-day-ahead model as if they were the same task.
 
 ## Run locally
 
