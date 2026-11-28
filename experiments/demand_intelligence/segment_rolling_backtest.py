@@ -395,14 +395,16 @@ def main():
    "selection_policy":{"metric":"segment validation MAE","minimum_gain_pct":MIN_VALIDATION_GAIN_PCT,
     "stability_rule":"prospective gate: at least two completed validation windows and at least two selections in the most recent three; applies only to the subsequent test block",
     "test_isolation":"test blocks never authorize specialists; only current and prior validation decisions control routing"},
-   "pooled_test_metrics":pooled,"fold_test_metrics":fold_rows,"calibration_diagnostics":calibration_audit,\n   "paired_cluster_bootstrap_uncertainty":uncertainty,
+   "pooled_test_metrics":pooled,"fold_test_metrics":fold_rows,"calibration_diagnostics":calibration_audit,
+   "paired_cluster_bootstrap_uncertainty":uncertainty,
    "segment_test_metrics":segment_test_metrics,"selection_diagnostics":stability,
    "fold_audit":audits,"selection_details":selection_rows,
    "segment_strategy":{"smooth":"LightGBM regression","erratic":"Huber LightGBM","lumpy":"occurrence classifier x positive-size regressor","intermittent":"occurrence classifier x positive-size regressor"},
    "calendar_features":target_cal_cols,"calendar_policy":"Only explicitly named target-date calendar flags are specialist-only; original origin-date flags remain in the production baseline. Verify target flags are available before forecast time.",
    "calibration_policy":{"method":"segment-wise multiplicative ratio calibration","fit_data":"current fold validation block only, using the validation-routed model","shrinkage_prior_rows":CALIBRATION_PRIOR_ROWS,"factor_clip":[CALIBRATION_MIN_FACTOR,CALIBRATION_MAX_FACTOR],"test_isolation":"test targets are never used to estimate correction factors"},
    "caveats":"Calibration factors are estimated from each fold's validation predictions and shrunk toward 1. They are not fitted on test outcomes. Compare calibrated MAE, RMSE, WAPE and bias against the uncalibrated gated challenger; calibration may reduce bias while worsening MAE. Confirm on a later live period before production promotion.",
-   "uncertainty_methodology":"Paired store-product cluster bootstrap, 500 replicates, resampling each entity with all its held-out dates/folds intact. This captures cross-sectional cluster uncertainty but not uncertainty from future time-window shifts; inspect fold-level results separately.",\n   "generated_at_utc":datetime.now(timezone.utc).isoformat()}
+   "uncertainty_methodology":"Paired store-product cluster bootstrap, 500 replicates, resampling each entity with all its held-out dates/folds intact. This captures cross-sectional cluster uncertainty but not uncertainty from future time-window shifts; inspect fold-level results separately.",
+   "generated_at_utc":datetime.now(timezone.utc).isoformat()}
   outputs={"segment_rolling_backtest_report.json":report,"segment_rolling_backtest_folds.csv":fdf,
    "segment_rolling_backtest_selection.csv":sdf,"segment_rolling_backtest_predictions.csv":pdf,
    "segment_rolling_backtest_calibration.csv":pd.DataFrame(calibration_audit)}
