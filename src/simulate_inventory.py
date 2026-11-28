@@ -168,7 +168,8 @@ def simulate(frame, forecast_col, policy_label, lead_time, review_period, holdin
 
 def aggregate(detail, label, params):
     sums=detail[["observed_sales","units_fulfilled","unfulfilled_observed_sales","orders_placed",
-                 "units_ordered","holding_cost","shortage_cost","ordering_cost","total_simulated_cost"]].sum()
+                 "units_ordered","holding_cost","shortage_cost","ordering_cost","total_simulated_cost",
+                 "constraint_limited_units","constraint_limited_orders"]].sum()
     return {
         "scenario":label,"policy":str(detail["policy"].iloc[0]),
         "store_product_series":int(len(detail)),
@@ -182,6 +183,8 @@ def aggregate(detail, label, params):
         "shortage_cost":float(sums["shortage_cost"]),
         "ordering_cost":float(sums["ordering_cost"]),
         "total_simulated_cost":float(sums["total_simulated_cost"]),
+        "constraint_limited_units":float(sums["constraint_limited_units"]),
+        "constraint_limited_orders":int(sums["constraint_limited_orders"]),
         "orders_suppressed_at_horizon":int(detail["orders_suppressed_at_horizon"].sum()),
         "units_suppressed_at_horizon":float(detail["units_suppressed_at_horizon"].sum()),
         "steady_state_observed_sales_proxy_units":float(detail["steady_state_observed_sales"].sum()),
