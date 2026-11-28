@@ -230,3 +230,20 @@ def inventory_scenario_comparison():
     df = _safe_csv(key)
     df = _require_columns(df, key, {"scenario", "policy", "fill_rate_pct", "total_simulated_cost"})
     return {"total": int(len(df)), "rows": df.fillna("").to_dict(orient="records")}
+
+
+
+@app.get("/api/v1/monitoring/forecast-quality/exposure")
+def forecast_quality_monitoring_exposure():
+    key = "monitoring/forecast-quality/forecast_monitoring_exposure.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"stockout_exposure_bucket", "rows", "calibrated_coverage_pct", "calibrated_mean_interval_width"})
+    return {"total": int(len(df)), "rows": df.fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/monitoring/forecast-quality/time-exposure")
+def forecast_quality_monitoring_time_exposure(limit: int = Query(5000, ge=1, le=20000)):
+    key = "monitoring/forecast-quality/forecast_monitoring_time_exposure.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"date", "stockout_exposure_bucket", "rows", "calibrated_coverage_pct"})
+    return {"total": int(len(df)), "rows": df.head(limit).fillna("").to_dict(orient="records")}
