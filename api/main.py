@@ -998,7 +998,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
             status_code=503,
             detail="No inventory or forecasting research reports are available in R2.",
         )
-    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    model = os.getenv("GROQ_MODEL") or "openai/gpt-oss-120b"
     try:
         from groq import Groq
 

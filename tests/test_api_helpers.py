@@ -473,6 +473,7 @@ def test_stakeholder_brief_generates_three_sections_and_combines_them(monkeypatc
     from types import SimpleNamespace
 
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_MODEL", "")
     monkeypatch.setattr(
         api,
         "_stakeholder_evidence",
@@ -519,6 +520,7 @@ def test_stakeholder_brief_generates_three_sections_and_combines_them(monkeypatc
     )
 
     assert len(calls) == 3
+    assert all(call["model"] == "openai/gpt-oss-120b" for call in calls)
     assert "FreshRetailNet-LT" in calls[0]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[1]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[2]["messages"][1]["content"]
