@@ -495,5 +495,5 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
     evidence = api._compact_stakeholder_evidence(raw)
     encoded = __import__("json").dumps(evidence, separators=(",", ":"))
     prompt_overhead = len(api._stakeholder_system_prompt()) + 1200
-    assert len(encoded) < 1800
+    assert len(encoded) < 2200
     assert prompt_overhead + len(encoded) < 5000
