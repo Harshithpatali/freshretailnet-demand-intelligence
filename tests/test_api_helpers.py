@@ -635,7 +635,7 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
     }
     evidence = api._compact_stakeholder_evidence(raw)
     encoded = __import__("json").dumps(evidence, separators=(",", ":"))
-    assert len(encoded) < 4000
+    assert len(encoded) < 7000  # Combined evidence is intentionally split into two Groq calls.
     parts = api._stakeholder_prompt_parts(
         api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the findings."),
         evidence, ["inventory_optimizer_summary.json", "forecast_research_summary.json"], [],
