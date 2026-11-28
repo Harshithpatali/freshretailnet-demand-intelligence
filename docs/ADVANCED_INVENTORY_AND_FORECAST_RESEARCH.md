@@ -150,9 +150,12 @@ Both workflows are triggered by changes to their source files on the configured 
 research branch, and can also be run manually from GitHub Actions. They require the same
 R2 secrets already used by the repository.
 
-The optimizer and forecasting benchmark publish stable R2 aliases plus immutable
-commit/run-scoped copies using the existing provenance helper. Each manifest records
-the source artifact, commit, workflow run and configuration.
+The inventory optimizer publishes stable R2 aliases plus immutable commit/run-scoped
+copies using the existing provenance helper. The forecasting benchmark publishes stable
+R2 result keys; its summary records the repository commit, workflow run ID, input SHA-256
+hashes, fixed random seed, model settings and evaluation configuration. The forecasting
+result keys are overwritten by a later successful run, so preserve the summary JSON and
+GitHub Actions run reference when archiving a historical benchmark.
 
 Do not claim a model improvement until the corresponding workflow succeeds and its
 published report is inspected. These methods are experimental challengers. They do not
