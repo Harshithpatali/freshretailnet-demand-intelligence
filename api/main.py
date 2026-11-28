@@ -103,7 +103,8 @@ def inventory():
 def inventory_series(policy: str | None = None, store_id: str | None = None,
                      product_id: str | None = None, limit: int = Query(500, ge=1, le=5000)):
     df = _safe_csv("inventory-simulation-artifacts/inventory_simulation_by_series.csv")
-    df = _require_columns(df, "inventory-simulation-artifacts/inventory_simulation_by_series.csv", {"policy", "store_id", "product_id"})\n    df = _require_columns(df, "inventory-simulation-artifacts/inventory_simulation_by_series.csv", {"policy", "store_id", "product_id"})
+    df = _require_columns(df, "inventory-simulation-artifacts/inventory_simulation_by_series.csv", {"policy", "store_id", "product_id"})
+    df = _require_columns(df, "inventory-simulation-artifacts/inventory_simulation_by_series.csv", {"policy", "store_id", "product_id"})
     for col, value in (("policy", policy), ("store_id", store_id), ("product_id", product_id)):
         if value is not None:
             df = df[df[col].astype(str) == value]
