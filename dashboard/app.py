@@ -428,7 +428,35 @@ with tabs[8]:
                 compact_table(daily_df, 260)
         except Exception as exc:
             st.info(f"Daily metrics are not available yet: {exc}")
-        st.caption("PSI compares the first and second chronological halves of the available evaluation window. It is a retrospective drift signal, not a live training-versus-production test.")
+        try:
+            exposure_data = get_json("/api/v1/monitoring/forecast-quality/exposure")
+            exposure_df = pd.DataFrame(exposure_data.get("rows", []))
+            st.markdown("#### Calibrated interval coverage by stockout exposure")
+            if not exposure_df.empty:
+                exposure_fig = px.bar(
+                    exposure_df, x="stockout_exposure_bucket", y="calibrated_coverage_pct",
+                    text="rows", title="P10–P90 coverage by stockout hours (06:00–22:00)"
+                )
+                exposure_fig.add_hline(y=80, line_dash="dash", annotation_text="80% nominal")
+                exposure_fig.update_layout(height=340, yaxis_title="Coverage (%)", xaxis_title="Observed stockout hours")
+                st.plotly_chart(exposure_fig, use_container_width=True)
+                compact_table(exposure_df, 220)
+            time_exposure_data = get_json("/api/v1/monitoring/forecast-quality/time-exposure")
+            time_exposure_df = pd.DataFrame(time_exposure_data.get("rows", []))
+            if not time_exposure_df.empty:
+                time_exposure_df["date"] = pd.to_datetime(time_exposure_df["date"])
+                time_fig = px.line(
+                    time_exposure_df, x="date", y="calibrated_coverage_pct",
+                    color="stockout_exposure_bucket", markers=True,
+                    title="Coverage over time by stockout-exposure segment"
+                )
+                time_fig.add_hline(y=80, line_dash="dash", annotation_text="80% nominal")
+                time_fig.update_layout(height=400, yaxis_title="Coverage (%)")
+                st.plotly_chart(time_fig, use_container_width=True)
+        except Exception as exc:
+            st.info(f"Stockout-segment coverage artifacts are not published yet: {exc}")
+        st.caption("PSI compares the first and second chronological halves of the available evaluation window. It is a retrospective drift signal, not a live training-versus-production test. Exposure-stratified coverage is descriptive and should always be read alongside sample sizes.")
+
     except Exception as exc:
         st.warning(f"Monitoring artifacts are not published yet. Run the Forecast Quality and Drift Monitoring workflow. Details: {exc}")
 
