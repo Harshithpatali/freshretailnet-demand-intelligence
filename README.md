@@ -39,11 +39,14 @@ flowchart TD
 | `scripts/stockout_diagnostics.py` | Stockout-exposure diagnostics |
 | `scripts/sql_eda.py` | DuckDB SQL exploratory analysis |
 | `scripts/full_dataset_eda.py` | Complete EDA across all 19 original source fields and both splits |
+| `scripts/optimize_inventory.py` | Store-level stochastic inventory allocation with service and capacity constraints |
+| `experiments/time_series/research_benchmark.py` | STL/Fourier/spectral/wavelet research, residual correction and validation-selected ensemble |
 | `src/train_model.py` | Point-forecast feature engineering and LightGBM training |
 | `src/train_quantile_models.py` | P10/P50/P90 forecasting and conformal interval adjustment |
 | `src/simulate_inventory.py` | Inventory policy simulation from held-out forecast rows |
 | `experiments/demand_intelligence/` | Demand segmentation and multi-window challenger experiments |
 | `experiments/wavelet/` | Wavelet feature experiments and comparisons |
+| `experiments/time_series/` | Advanced time-series research benchmark and model selection |
 | `api/main.py` | Read-only FastAPI artifact endpoints |
 | `dashboard/app.py` | Streamlit dashboard |
 | `docs/` | Ingestion, R2 processing, and deployment instructions |
@@ -154,6 +157,19 @@ The successful [five-fold run #46124737202](https://github.com/Harshithpatali/fr
 H7/H14 also improve pooled RMSE and WAPE with 95% cluster-bootstrap intervals excluding zero. H1 is inconclusive on MAE, and calibrated RMSE worsens by 0.399%. Keep the baseline at H1 and treat H7/H14 as challengers pending a later untouched time window. These intervals measure cross-sectional store-product uncertainty conditional on the five windows, not future temporal uncertainty. See the [full five-fold report](docs/results/segment_rolling_backtest.md) and [expanded experiment summary](docs/results/experiment_summary.csv).
 
 Each report identifies its workflow run, evaluation period, sample size and limitations. Re-run the workflows after changing data or code and publish a new dated report rather than silently replacing historical results. Do not compare the separate multi-horizon segment experiments with the production one-day-ahead model as if they were the same task.
+
+## Advanced research: constrained inventory and time-series benchmark
+
+The repository includes two additional reproducible research tracks:
+
+- **Stochastic inventory optimization:** a mixed-integer, store-level allocation model selects one order-up-to quantity per SKU while enforcing a demand-weighted expected fill-rate target and shared store capacity. It also applies MOQ, pack-size and maximum-order assumptions. A heavily penalized slack variable reports service targets that cannot be met under a given capacity. See [the mathematical formulation and limitations](docs/STOCHASTIC_INVENTORY_OPTIMIZATION.md).
+- **Advanced time-series research:** compares the existing LightGBM feature baseline with Fourier harmonics, causal STL features, FFT spectral diagnostics and trailing db2 wavelet features. It includes a same-row wavelet ablation, a residual correction model trained on an earlier validation block, and non-negative ensemble weights selected on a later validation block. See [the benchmark methodology](docs/TIME_SERIES_RESEARCH_BENCHMARK.md).
+
+The inventory workflow evaluates 27 combinations of lead/review cycle, service target and shared capacity. The time-series workflow uses a deterministic 1,500-series research cohort to bound repeated STL fits. Its model selection and residual fitting use validation only; the existing seven-day evaluation partition is scored after those decisions are frozen.
+
+Artifacts are published to private R2 under `inventory-optimization-artifacts/` and `timeseries-research-artifacts/`. The dashboard exposes **Optimized inventory engine** and **Time-series research benchmark** pages. Run the respective GitHub Actions workflows after merge to refresh those reports.
+
+**Important modelling assumptions:** the inventory optimizer approximates protection-period demand as Normal and combines daily forecast variances under an independence assumption. Capacity, costs, MOQ and pack sizes are illustrative values in normalized observed-sales units. The time-series research cohort is a sample, not the full 50,000-series population. Both tracks use observed sales, which may be stockout-censored. Neither result should be described as measured retailer savings or proven future performance.
 
 ## Run locally
 
