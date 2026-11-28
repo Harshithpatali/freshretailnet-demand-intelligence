@@ -8,6 +8,10 @@ on:
       - ".github/workflows/forecast-monitoring.yml"
       - "src/train_quantile_models.py"
 
+concurrency:
+  group: forecast-monitoring-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
