@@ -1030,7 +1030,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         parts = _stakeholder_prompt_parts(request, evidence, sources, missing)
         system_message = _stakeholder_system_prompt()
         max_prompt_characters = 5_000
-        max_completion_tokens = 650
+        max_completion_tokens = 590
         prompt_sizes = [
             len(system_message) + len(part["user_message"])
             for part in parts
@@ -1061,7 +1061,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
                     "estimated_reserved_tokens": estimated_reserved_tokens,
                     "maximum_estimated_reserved_tokens": max_estimated_reserved_tokens,
                     "action": (
-                        "The report is split into three bounded calls. Reduce the requested focus or "
+                        "The report is split into four bounded calls. Reduce the requested focus or "
                         "inspect the compact evidence fields before retrying; no Groq call was made."
                     ),
                 },
