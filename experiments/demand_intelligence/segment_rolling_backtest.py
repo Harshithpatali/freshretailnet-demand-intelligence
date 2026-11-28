@@ -17,11 +17,13 @@ from src.train_model import RAW, env, load_features_from_frame
 from scripts.feature_availability_audit import target_calendar_feature_audit, DETERMINISTIC_TARGET_DATE_FEATURES
 from scripts.artifact_provenance import build_provenance, upload_versioned_artifact
 
-OUT="segment-rolling-backtest-artifacts"
+OUT=os.getenv("SEGMENT_BACKTEST_PREFIX","segment-rolling-backtest-artifacts").strip("/")
+DATASET_LABEL=os.getenv("BACKTEST_DATASET_LABEL","FreshRetailNet-50K")
+RAW_KEYS={"train":os.getenv("R2_TRAIN_KEY",RAW["train"]),"eval":os.getenv("R2_EVAL_KEY",RAW["eval"])}
 GROUP=["store_id","product_id"]
 HORIZONS=(1,7,14)
 FOLDS=int(os.getenv("ROLLING_FOLDS","5"))
-BLOCK_DAYS=7
+BLOCK_DAYS=int(os.getenv("ROLLING_BLOCK_DAYS","7"))
 MIN_VALIDATION_GAIN_PCT=0.5
 MIN_TRAIN_DATES=56
 MIN_HURDLE_VALIDATION_POSITIVES=20
@@ -125,7 +127,7 @@ def main():
  s3,bucket=client(),env("R2_BUCKET")
  with tempfile.TemporaryDirectory(prefix="frn-rolling-segments-") as td:
   root=Path(td); raw={}
-  for split,key in RAW.items():
+  for split,key in RAW_KEYS.items():
    p=root/f"{split}.parquet"; print(f"Downloading {key}")
    s3.download_file(bucket,key,str(p)); raw[split]=pl.read_parquet(p)
   combined=pl.concat([raw["train"],raw["eval"]],how="diagonal_relaxed").sort(GROUP+["dt"])
@@ -342,7 +344,7 @@ def main():
     "baseline_wape_pct":base["wape_pct"],"selected_wape_pct":selected["wape_pct"]
    })
   uncertainty=[]  # populated by the separate post-hoc bootstrap workflow
-  report={"experiment":"multi-window rolling backtest with validation-gated segment specialists",
+  report={"experiment":"multi-window rolling backtest with validation-gated segment specialists","dataset":DATASET_LABEL,
    "fold_design":{"folds":FOLDS,"configured_test_block_days":BLOCK_DAYS,"validation_block_days":BLOCK_DAYS,
     "training":"expanding chronological history","test_windows_disjoint":True,"effective_test_block_days_by_horizon":{str(h):next(a["test_dates"] for a in audits if a["horizon_days"]==h and a["fold"]==1) for h in HORIZONS}},
    "selection_policy":{"metric":"segment validation MAE","minimum_gain_pct":MIN_VALIDATION_GAIN_PCT,
@@ -414,7 +416,7 @@ def main():
    "Five-Fold Segment Specialist Rolling Backtest",
    {"raw/train.parquet":root/"train.parquet","raw/eval.parquet":root/"eval.parquet"},
    str(pd.to_datetime(pdf.target_date).min().date()),str(pd.to_datetime(pdf.target_date).max().date()),
-   {"folds":FOLDS,"horizons_days":list(HORIZONS),"validation_block_days":BLOCK_DAYS,
+   {"dataset_label":DATASET_LABEL,"train_key":RAW_KEYS["train"],"eval_key":RAW_KEYS["eval"],"folds":FOLDS,"test_block_days":BLOCK_DAYS,"horizons_days":list(HORIZONS),"validation_block_days":BLOCK_DAYS,
     "minimum_train_dates":MIN_TRAIN_DATES,"minimum_validation_mae_gain_pct":MIN_VALIDATION_GAIN_PCT,
     "calibration_prior_rows":CALIBRATION_PRIOR_ROWS,"seed":SEED,
     "target_calendar_policy":calendar_availability_audit},
