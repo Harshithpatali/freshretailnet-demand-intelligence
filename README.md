@@ -112,6 +112,18 @@ The following reports publish aggregate results from successful R2-backed workfl
 
 **Inventory trade-off:** calibrated P90 achieved an 85.61% full-horizon observed-sales fill rate versus 78.15% for seasonal naive, but its simulated total cost was 1,126,397 versus 1,119,545 under the illustrative cost assumptions. This is a simulated policy comparison, not measured business savings.
 
+### Latest five-fold segment-specialist experiment
+
+The successful [five-fold run #46124737202](https://github.com/Harshithpatali/freshretailnet-demand-intelligence/actions/runs/46124737202) evaluates 1-, 7- and 14-day horizons over 5 chronological folds, 50,000 store-product clusters and 2.75 million held-out rows.
+
+| Horizon | Calibrated MAE | MAE improvement | 95% paired cluster-bootstrap CI |
+|---|---:|---:|---:|
+| 1 day | 0.39276 | +0.053% | -0.014% to +0.112% |
+| 7 days | 0.41991 | +1.565% | +1.453% to +1.673% |
+| 14 days | 0.45244 | +1.443% | +1.318% to +1.561% |
+
+H7/H14 also improve pooled RMSE and WAPE with 95% cluster-bootstrap intervals excluding zero. H1 is inconclusive on MAE, and calibrated RMSE worsens by 0.399%. Keep the baseline at H1 and treat H7/H14 as challengers pending a later untouched time window. These intervals measure cross-sectional store-product uncertainty conditional on the five windows, not future temporal uncertainty. See the [full five-fold report](docs/results/segment_rolling_backtest.md) and [expanded experiment summary](docs/results/experiment_summary.csv).
+
 Each report identifies its workflow run, evaluation period, sample size and limitations. Re-run the workflows after changing data or code and publish a new dated report rather than silently replacing historical results. Do not compare the separate multi-horizon segment experiments with the production one-day-ahead model as if they were the same task.
 
 ## Run locally
