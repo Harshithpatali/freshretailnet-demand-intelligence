@@ -6,7 +6,7 @@ predictions only when its validation MAE beats the production LightGBM baseline
 by the configured margin. Test outcomes never influence routing decisions.
 """
 from __future__ import annotations
-import json, sys, tempfile
+import json, os, sys, tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 import boto3, lightgbm as lgb, numpy as np, pandas as pd, polars as pl
@@ -160,10 +160,9 @@ def main():
     (2*np.pi*pl.col("target_date").dt.weekday()/7).cos().alias("target_dow_cos")])
    pdf=hf.to_pandas(); pdf["target_date"]=pd.to_datetime(pdf.target_date)
    dates=sorted(pdf.target_date.dt.normalize().unique())
-   # Reserve the latest three disjoint test windows; each has its own
+   # Reserve the latest FOLDS disjoint test windows; each has its own
    # immediately preceding 7-day validation block and expanding historical train.
-   # Keep three disjoint test folds, shrinking each test block when the
-   # horizon shift leaves fewer dates. Training and validation lengths stay fixed.
+   # Test blocks shrink only when the available date history requires it.
    required_prior=MIN_TRAIN_DATES+BLOCK_DAYS
    max_test_days=(len(dates)-required_prior)//FOLDS
    effective_block_days=min(BLOCK_DAYS,max_test_days)
