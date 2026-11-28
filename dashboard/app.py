@@ -353,9 +353,9 @@ with tabs[6]:
         with p3:
             shortage_rate = st.number_input("Shortage penalty / unit", min_value=0.0, value=2.0, step=0.5)
             order_rate = st.number_input("Ordering cost / order", min_value=0.0, value=5.0, step=1.0)
-        exp_start = exp_filters["dates"]["start"]
-        exp_end = exp_filters["dates"]["end"]
-        if st.button("Run experiment", type="primary", use_container_width=True):
+        exp_start = exp_filters.get("dates", {}).get("start", "")
+        exp_end = exp_filters.get("dates", {}).get("end", "")
+        if st.button("Run experiment", type="primary", use_container_width=True, disabled=exp_chosen is None):
             try:
                 with st.spinner("Loading held-out series and simulating policies..."):
                     exp_data = get_json("/api/v1/forecasts", {
