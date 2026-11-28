@@ -705,9 +705,10 @@ def main():
         missing_base = sorted(set(BASE_FEATURES) - set(base_columns))
         if missing_base:
             raise RuntimeError(f"Base feature contract missing columns: {missing_base}")
-        base_panel = base_panel[
-            GROUP + ["date", "sale_amount"] + base_columns
-        ].copy()
+        # Store/product identifiers are also part of BASE_FEATURES; preserve
+        # each source column only once to keep Pandas groupby/joins well-defined.
+        selected_columns = list(dict.fromkeys(GROUP + ["date", "sale_amount"] + base_columns))
+        base_panel = base_panel[selected_columns].copy()
 
         wavelet_panel = build_wavelet_features(
             raw_panel[GROUP + ["date", "sale_amount"]], WAVELET_FAMILY
