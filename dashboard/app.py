@@ -134,8 +134,8 @@ workspace_pages = {
     "Explore data": ["Dataset explorer"],
     "Forecasting": ["Forecast explorer", "Uncertainty & calibration"],
     "Availability & risk": ["Stockout diagnostics", "Forecast monitoring", "Demand censoring"],
-    "Inventory decisions": ["Inventory optimisation", "Inventory scenarios"],
-    "Experiments": ["Experiment lab", "Wavelet benchmark"],
+    "Inventory decisions": ["Inventory optimisation", "Optimized inventory engine", "Inventory scenarios"],
+    "Experiments": ["Experiment lab", "Wavelet benchmark", "Time-series research benchmark"],
 }
 st.sidebar.title("Navigation")
 st.sidebar.caption("Choose a task area, then open the page you need.")
@@ -434,6 +434,199 @@ if active_page == "Inventory optimisation":
         cols = [c for c in ["scenario","policy","steady_state_fill_rate_pct","steady_state_total_cost","steady_state_shortage_cost"] if c in sens]
         compact_table(sens[cols], 320)
     st.warning("Costs, lead time, review cadence and starting inventory are simulation assumptions. The short evaluation horizon and observed-sales proxy limit operational interpretation.")
+
+
+if active_page == "Optimized inventory engine":
+    st.subheader("Optimized inventory decision engine")
+    st.caption(
+        "A store-level optimizer chooses order-up-to quantities across products while balancing "
+        "expected shortage, holding and ordering costs under a service-level target and shared capacity."
+    )
+    try:
+        opt_summary = get_json("/api/v1/inventory/optimization")
+        opt_rows = get_json("/api/v1/inventory/optimization/scenarios")
+        scenario_df = pd.DataFrame(opt_rows.get("rows", []))
+        if scenario_df.empty:
+            st.info("No optimization scenarios have been published yet. Run the Stochastic Inventory Optimization workflow.")
+        else:
+            target_scenarios = scenario_df["scenario"].astype(str).tolist()
+            default_scenario = "lead3_review2_service90_capacity4d"
+            default_index = target_scenarios.index(default_scenario) if default_scenario in target_scenarios else 0
+            chosen_scenario = st.selectbox(
+                "Optimization scenario", target_scenarios,
+                index=default_index, key="inventory_optimizer_scenario",
+                help="Each scenario specifies lead time, review period, service target and shared store capacity.",
+            )
+            selected = scenario_df[scenario_df["scenario"].astype(str) == chosen_scenario].copy()
+            if not selected.empty:
+                row = selected.iloc[0]
+                k1, k2, k3, k4 = st.columns(4)
+                with k1:
+                    metric("Target fill rate", f"{row['target_service_level_pct']:.0f}%")
+                with k2:
+                    metric("Expected fill rate", f"{row['expected_fill_rate_pct']:.2f}%")
+                with k3:
+                    metric("Capacity utilization", f"{row['capacity_utilization_pct']:.1f}%")
+                with k4:
+                    metric("Stores meeting target", f"{row['stores_meeting_service_level_pct']:.1f}%")
+                st.caption(
+                    f"Lead time: {int(row['lead_time_days'])} days · Review period: "
+                    f"{int(row['review_period_days'])} days · Shared capacity: {row['capacity_days']:g} "
+                    "mean-demand days per store"
+                )
+                a, b, d = st.columns(3)
+                with a:
+                    metric("Expected shortage", f"{row['expected_shortage_units']:,.2f} units")
+                with b:
+                    metric("Service shortfall slack", f"{row['service_level_shortfall_units']:,.2f} units")
+                with d:
+                    metric("Expected simulated cost", f"{row['expected_total_cost']:,.2f}")
+                selected["capacity_label"] = selected["capacity_days"].astype(str) + " demand-days"
+                st.markdown("#### Selected scenario by store")
+                store_detail = get_json("/api/v1/inventory/optimization/scenarios")
+                st.caption(
+                    f"Optimized {int(row['stores']):,} stores and "
+                    f"{int(row['store_product_series']):,} store-product series across the selected configuration."
+                )
+
+            st.markdown("#### Service level versus capacity trade-off")
+            tradeoff = scenario_df[
+                (scenario_df["lead_time_days"] == row["lead_time_days"])
+                & (scenario_df["review_period_days"] == row["review_period_days"])
+            ].copy()
+            tradeoff_fig = px.scatter(
+                tradeoff, x="capacity_utilization_pct", y="expected_fill_rate_pct",
+                color="target_service_level_pct", size="expected_total_cost",
+                hover_data=["capacity_days", "service_level_shortfall_units", "stores_meeting_service_level_pct"],
+                title="Achieved expected fill rate versus shared capacity utilization",
+                labels={
+                    "capacity_utilization_pct": "Capacity utilization (%)",
+                    "expected_fill_rate_pct": "Expected fill rate (%)",
+                    "target_service_level_pct": "Target service (%)",
+                },
+            )
+            tradeoff_fig.update_layout(height=400)
+            st.plotly_chart(tradeoff_fig, use_container_width=True)
+            scenario_display = [
+                "scenario", "target_service_level_pct", "capacity_days",
+                "expected_fill_rate_pct", "stores_meeting_service_level_pct",
+                "capacity_utilization_pct", "service_level_shortfall_units",
+                "expected_shortage_units", "expected_total_cost", "solver_success_pct",
+            ]
+            compact_table(scenario_df[scenario_display], 360)
+
+            st.markdown("#### Reference replenishment plan")
+            plan_response = get_json("/api/v1/inventory/optimization/plan", {"limit": 1000})
+            plan_df = pd.DataFrame(plan_response.get("rows", []))
+            if not plan_df.empty:
+                st.caption(
+                    "Reference plan: 3-day lead time, 2-day review, 90% store-level expected fill target, "
+                    "4 demand-days of shared capacity. This is an example configuration, not a purchase order."
+                )
+                st.metric("Plan rows returned", f"{len(plan_df):,}", f"{plan_response.get('total', 0):,} total SKUs")
+                compact_table(plan_df.head(100), 340)
+                st.download_button(
+                    "Download returned reference-plan rows",
+                    plan_df.to_csv(index=False),
+                    "freshretailnet_inventory_optimization_plan_sample.csv",
+                    "text/csv",
+                )
+            else:
+                st.info("The reference replenishment plan is not available yet.")
+        st.info(opt_summary.get("configuration", {}).get("service_constraint", "Service-level constraints are applied at store level."))
+        st.warning(
+            "The demand distribution is approximated as Normal, with daily forecast errors treated as independent. "
+            "Capacity, costs, MOQ, pack size and order caps are illustrative assumptions in normalized observed-sales units. "
+            "Observed sales may be censored by stockouts; this is decision support, not a live purchasing system."
+        )
+    except Exception as exc:
+        st.warning(f"Inventory optimization artifacts are not available yet. Run the Stochastic Inventory Optimization workflow. Details: {exc}")
+
+
+if active_page == "Time-series research benchmark":
+    st.subheader("Advanced time-series research benchmark")
+    st.caption(
+        "Chronological comparison of STL/Fourier, spectral and wavelet features, "
+        "residual correction and validation-selected ensembles."
+    )
+    try:
+        research = get_json("/api/v1/research/time-series")
+        result = pd.DataFrame(get_json("/api/v1/research/time-series/comparison").get("rows", []))
+        ablation = pd.DataFrame(get_json("/api/v1/research/time-series/ablation").get("rows", []))
+        config = research.get("configuration", {})
+        diagnostics = research.get("feature_diagnostics", {})
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            metric("Sampled series", f"{int(config.get('sampled_series', 0)):,}")
+        with m2:
+            metric("Feature rows", f"{int(diagnostics.get('feature_rows', 0)):,}")
+        with m3:
+            metric("STL / spectral features", f"{int(diagnostics.get('stl_spectral_feature_count', 0))}")
+        with m4:
+            metric("Wavelet features", f"{int(diagnostics.get('wavelet_feature_count', 0))}")
+        st.caption(
+            f"Evaluation: {config.get('evaluation_period', {}).get('start')} to "
+            f"{config.get('evaluation_period', {}).get('end')} · "
+            f"Sample seed: {config.get('sample_seed')}"
+        )
+        if not result.empty:
+            st.markdown("#### Held-out model comparison")
+            ordered = result.sort_values("evaluation_mae")
+            mae_fig = px.bar(
+                ordered, x="model", y="evaluation_mae", color="model",
+                title="Evaluation MAE by forecasting approach",
+                hover_data=["evaluation_rmse", "evaluation_wape_pct", "evaluation_bias_pct"],
+            )
+            mae_fig.update_layout(height=400, showlegend=False, xaxis_title="")
+            st.plotly_chart(mae_fig, use_container_width=True)
+            wape_fig = px.bar(
+                ordered, x="model", y="evaluation_wape_pct", color="model",
+                title="Evaluation WAPE by forecasting approach",
+            )
+            wape_fig.update_layout(height=350, showlegend=False, xaxis_title="")
+            st.plotly_chart(wape_fig, use_container_width=True)
+            compact_table(result.sort_values("evaluation_mae"), 340)
+
+        st.markdown("#### Wavelet feature ablation")
+        if not ablation.empty:
+            compact_table(ablation, 160)
+            arow = ablation.iloc[0]
+            b1, b2 = st.columns(2)
+            with b1:
+                metric("Wavelet MAE change", f"{arow['mae_change_pct']:+.2f}%", "Negative means adding wavelet features reduced error.")
+            with b2:
+                metric("Wavelet WAPE change", f"{arow['wape_change_pct']:+.2f}%", "Negative means adding wavelet features reduced error.")
+
+        st.markdown("#### Ensemble weights selected on validation")
+        weights = research.get("validation_ensemble_weights", {})
+        if weights:
+            weight_df = pd.DataFrame([{"model": name, "weight": value} for name, value in weights.items()])
+            weight_fig = px.bar(
+                weight_df.sort_values("weight", ascending=False), x="model", y="weight",
+                title="Non-negative validation-selected ensemble weights",
+            )
+            weight_fig.update_layout(height=340, yaxis_tickformat=".0%", xaxis_title="")
+            st.plotly_chart(weight_fig, use_container_width=True)
+            compact_table(weight_df.sort_values("weight", ascending=False), 220)
+
+        st.markdown("#### Spectral and STL diagnostics")
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            metric("Mean weekly spectral power", f"{diagnostics.get('mean_spectral_weekly_power_share', 0):.3f}")
+        with d2:
+            metric("Mean STL seasonal strength", f"{diagnostics.get('mean_stl_seasonal_strength', 0):.3f}")
+        with d3:
+            metric("Mean dominant period", f"{diagnostics.get('dominant_period_distribution', {}).get('mean', 0):.2f} days")
+        st.caption(
+            "STL and spectral features use trailing historical windows only. Residual fitting uses the first half "
+            "of validation; ensemble weights use the second half. The seven-day evaluation period is unchanged."
+        )
+        st.warning(
+            "This research benchmark uses a deterministic sample of 1,500 series, not the complete 50,000-series population. "
+            "Cluster-bootstrap intervals are conditional on the seven evaluation dates and do not establish future temporal robustness."
+        )
+    except Exception as exc:
+        st.warning(f"Time-series research results are not published yet. Run the Advanced Time-Series Research Benchmark workflow. Details: {exc}")
 
 
 if active_page == "Dataset explorer":
