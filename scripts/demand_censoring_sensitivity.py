@@ -151,7 +151,7 @@ def main():
             raise RuntimeError("Expected 24 hourly slots per store-product-date; inspect source vector lengths")
         daily = apply_sensitivity(daily)
         daily["stockout_bucket"] = exposure_bucket(daily["stockout_hours_06_21"])
-        bucket = (
+        bucket_summary = (
             daily.groupby("stockout_bucket", observed=True)
             .agg(
                 rows=("observed_sales", "size"),
@@ -197,7 +197,7 @@ def main():
         bucket_path = root / "demand_censoring_sensitivity_by_bucket.csv"
         summary_path = root / "demand_censoring_sensitivity.json"
         daily.to_csv(daily_path, index=False)
-        bucket.to_csv(bucket_path, index=False)
+        bucket_summary.to_csv(bucket_path, index=False)
         summary_path.write_text(json.dumps(summary, indent=2, default=str))
         uploads = [
             (daily_path, "diagnostics/demand-censoring/demand_censoring_sensitivity_daily.csv", "text/csv"),
