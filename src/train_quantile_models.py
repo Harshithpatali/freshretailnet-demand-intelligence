@@ -144,6 +144,130 @@ def calibrated_interval_by_group(y,p,context_exposure,adjustments):
         "context_feature":"stockout_hours_roll_max_7",
     }
     return summary,lower,upper
+
+RISK_FEATURES=(
+    "stockout_hours_lag_1","stockout_hours_roll_max_7",
+    "stock_status_lag_1","stock_status_lag_7",
+    "sales_lag_1","sales_lag_7","sales_lag_14","sales_lag_28",
+    "sales_roll_mean_7","sales_roll_mean_28","sales_roll_std_7",
+    "day_of_week","day_of_month","month","day_of_year","week_of_year",
+)
+
+
+def fit_stockout_risk_model(train,validation,evaluation):
+    """Predict >=16h stockout exposure from prior-only numeric history and calendar."""
+    from sklearn.metrics import average_precision_score, roc_auc_score
+    features=[name for name in RISK_FEATURES if name in train.columns]
+    if len(features)<5:
+        raise ValueError(f"Too few prior-only stockout risk features: {features}")
+    def matrix(frame):
+        return frame[features].astype(float).replace([np.inf,-np.inf],np.nan).fillna(0.0)
+    x_train,x_val,x_eval=matrix(train),matrix(validation),matrix(evaluation)
+    y_train=(train["stock_hour6_22_cnt"].to_numpy(dtype=float)>=16).astype(int)
+    y_val=(validation["stock_hour6_22_cnt"].to_numpy(dtype=float)>=16).astype(int)
+    y_eval=(evaluation["stock_hour6_22_cnt"].to_numpy(dtype=float)>=16).astype(int)
+    positives=int(y_train.sum())
+    negatives=int(len(y_train)-positives)
+    if positives<100 or negatives<100:
+        raise ValueError(f"Insufficient high/low stockout examples: positives={positives:,}, negatives={negatives:,}")
+    params={
+        "objective":"binary","metric":"auc","learning_rate":.05,
+        "num_leaves":31,"max_depth":-1,"min_data_in_leaf":200,
+        "feature_fraction":.9,"bagging_fraction":.9,"bagging_freq":1,
+        "lambda_l2":5.0,"scale_pos_weight":negatives/max(positives,1),
+        "verbosity":-1,"seed":42,"num_threads":4,
+    }
+    train_set=lgb.Dataset(x_train,label=y_train,free_raw_data=False)
+    valid_set=lgb.Dataset(x_val,label=y_val,reference=train_set,free_raw_data=False)
+    model=lgb.train(params,train_set,num_boost_round=800,valid_sets=[valid_set],
+                    callbacks=[lgb.early_stopping(50,verbose=False)])
+    p_val=np.clip(model.predict(x_val,num_iteration=model.best_iteration),0.0,1.0)
+    p_eval=np.clip(model.predict(x_eval,num_iteration=model.best_iteration),0.0,1.0)
+    def ranking(labels,prob):
+        if np.unique(labels).size<2:
+            return {"roc_auc":None,"average_precision":None,"positive_rate_pct":float(labels.mean()*100)}
+        return {"roc_auc":float(roc_auc_score(labels,prob)),
+                "average_precision":float(average_precision_score(labels,prob)),
+                "positive_rate_pct":float(labels.mean()*100)}
+    cutoff=float(np.quantile(p_val,.90))
+    top=p_eval>=cutoff
+    total_positive=max(int(y_eval.sum()),1)
+    audit={
+        "validation":ranking(y_val,p_val),"evaluation":ranking(y_eval,p_eval),
+        "validation_top_decile_threshold":cutoff,
+        "evaluation_top_decile_rows":int(top.sum()),
+        "evaluation_top_decile_precision_pct":float(y_eval[top].mean()*100) if top.any() else 0.0,
+        "evaluation_top_decile_recall_pct":float(y_eval[top].sum()/total_positive*100),
+        "prior_only_features":features,
+        "positive_definition":"stock_hour6_22_cnt >= 16 on target day",
+    }
+    return model,p_val,p_eval,audit
+
+
+def risk_score_edges(validation_prob,bins=10):
+    values=np.asarray(validation_prob,dtype=float)
+    edges=np.unique(np.quantile(values,np.linspace(0,1,bins+1)))
+    if len(edges)<2:
+        return np.array([-np.inf,np.inf],dtype=float)
+    edges[0]=-np.inf
+    edges[-1]=np.inf
+    return edges
+
+
+def risk_score_groups(probability,edges):
+    return np.digitize(np.asarray(probability,dtype=float),edges[1:-1],right=True).astype(int)
+
+
+def risk_conformal_adjustments(y,lower,upper,validation_risk_prob,global_qhat,
+                               coverage=.80,min_group_rows=1000,prior_strength_rows=2000):
+    edges=risk_score_edges(validation_risk_prob)
+    groups=risk_score_groups(validation_risk_prob,edges)
+    adjustments={}
+    audit=[]
+    for group in range(len(edges)-1):
+        mask=groups==group
+        n=int(mask.sum())
+        if n<min_group_rows:
+            group_qhat=float(global_qhat); weight=0.0; applied=float(global_qhat)
+            method="global_fallback_insufficient_validation_rows"
+        else:
+            group_qhat=conformal_adjustment(np.asarray(y)[mask],np.asarray(lower)[mask],
+                                            np.asarray(upper)[mask],coverage)
+            weight=float(n/(n+prior_strength_rows))
+            applied=float(weight*group_qhat+(1-weight)*global_qhat)
+            method="risk_bin_quantile_shrunk_to_global"
+        adjustments[group]=applied
+        audit.append({"predicted_risk_decile":group+1,"validation_rows":n,
+                      "group_adjustment":float(group_qhat),"global_adjustment":float(global_qhat),
+                      "shrinkage_weight":weight,"applied_adjustment":applied,"method":method})
+    return edges,adjustments,audit
+
+
+def calibrated_interval_by_risk(y,p,evaluation_risk_prob,validation_edges,adjustments):
+    groups=risk_score_groups(evaluation_risk_prob,validation_edges)
+    qhat=np.array([adjustments.get(int(group),0.0) for group in groups],dtype=float)
+    lower=np.maximum(0.0,np.asarray(p[.10],dtype=float)-qhat)
+    upper=np.maximum(lower,np.asarray(p[.90],dtype=float)+qhat)
+    actual=np.asarray(y,dtype=float)
+    return {"coverage_pct":float(((actual>=lower)&(actual<=upper)).mean()*100),
+            "mean_width":float((upper-lower).mean()),"mean_adjustment":float(qhat.mean()),
+            "context_feature":"predicted_high_stockout_risk_decile"},lower,upper
+
+
+def risk_decile_diagnostics(y,actual_exposure,probability,edges,lower,upper):
+    groups=risk_score_groups(probability,edges)
+    actual=np.asarray(y,dtype=float); exposure=np.asarray(actual_exposure,dtype=float)
+    lower=np.asarray(lower,dtype=float); upper=np.asarray(upper,dtype=float)
+    rows=[]
+    for group in range(len(edges)-1):
+        mask=groups==group
+        if mask.any():
+            rows.append({"predicted_risk_decile":group+1,"rows":int(mask.sum()),
+                         "actual_16_plus_rate_pct":float((exposure[mask]>=16).mean()*100),
+                         "coverage_pct":float(((actual[mask]>=lower[mask])&(actual[mask]<=upper[mask])).mean()*100),
+                         "mean_interval_width":float((upper[mask]-lower[mask]).mean()),
+                         "mean_predicted_high_exposure_probability":float(np.asarray(probability)[mask].mean())})
+    return rows
 def main():
     s3=client(); bucket=env("R2_BUCKET")
     with tempfile.TemporaryDirectory(prefix="frn-quantiles-") as td:
@@ -199,6 +323,30 @@ def main():
             ye,ep,e["stockout_hours_roll_max_7"].to_numpy(dtype=float),history_adjustments
         )
         conditionally_calibrated_ep={.10:eval_cond_lo,.50:ep[.50],.90:eval_cond_hi}
+
+        # Predict current-day high stockout exposure from prior-only numeric
+        # history and known calendar features; fit risk bins and conformal
+        # adjustments using validation data only.
+        risk_model,risk_val,risk_eval,risk_model_metrics=fit_stockout_risk_model(a,v,e)
+        risk_edges,risk_adjustments,risk_calibration_audit=risk_conformal_adjustments(
+            yv,vp[.10],vp[.90],risk_val,qhat,coverage=.80,
+            min_group_rows=1000,prior_strength_rows=2000,
+        )
+        risk_val_interval,risk_val_lo,risk_val_hi=calibrated_interval_by_risk(
+            yv,vp,risk_val,risk_edges,risk_adjustments
+        )
+        risk_eval_interval,risk_eval_lo,risk_eval_hi=calibrated_interval_by_risk(
+            ye,ep,risk_eval,risk_edges,risk_adjustments
+        )
+        risk_calibrated_ep={.10:risk_eval_lo,.50:ep[.50],.90:risk_eval_hi}
+        risk_decile_audit=risk_decile_diagnostics(
+            ye,e["stock_hour6_22_cnt"].to_numpy(dtype=float),
+            risk_eval,risk_edges,risk_eval_lo,risk_eval_hi,
+        )
+        risk_path=root/"lightgbm_high_stockout_risk.txt"
+        risk_model.save_model(str(risk_path))
+        paths.append(risk_path)
+
         result={"validation":metrics(yv,vp),"evaluation":metrics(ye,ep),
           "conformal_calibration":{"method":"split conformalized quantile regression",
             "nominal_coverage_pct":80.0,"validation_adjustment":qhat,
@@ -207,7 +355,20 @@ def main():
             "caveat":"Calibration is estimated on a prior time window; temporal distribution shift can invalidate nominal future coverage."},
           "evaluation_calibrated_stockout_exposure_strata":strata(e,calibrated_ep),
           "evaluation_conditional_calibrated_stockout_exposure_strata":strata(e,conditionally_calibrated_ep),
+          "evaluation_risk_conditioned_stockout_exposure_strata":strata(e,risk_calibrated_ep),
           "evaluation_stockout_exposure_strata":strata(e,ep),
+          "risk_conditioned_conformal_calibration":{
+            "method":"prior-only high-stockout risk classifier with validation-fitted risk-decile conformal adjustments",
+            "context_features":risk_model_metrics["prior_only_features"],
+            "risk_model_metrics":risk_model_metrics,
+            "risk_score_edges_validation":risk_edges.tolist(),
+            "validation_group_adjustments":risk_calibration_audit,
+            "validation_interval":risk_val_interval,
+            "evaluation_interval":risk_eval_interval,
+            "evaluation_metrics":metrics(ye,risk_calibrated_ep),
+            "evaluation_risk_deciles":risk_decile_audit,
+            "interpretation":"Candidate only. Evaluate actual 16+ hour coverage and interval width; do not promote unless high-exposure calibration improves with a reliable forecast-time risk ranking.",
+          },
           "conditional_conformal_calibration":{
             "method":"lagged stockout-exposure-grouped split conformal with shrinkage to global adjustment",
             "context_feature":"stockout_hours_roll_max_7",
@@ -239,6 +400,8 @@ def main():
                       "actual_sale_amount":ye.to_numpy(),"p10":ep[.10],"p50":ep[.50],"p90":ep[.90],
                       "p10_calibrated":eval_lo,"p90_calibrated":eval_hi,
                       "p10_conditional_calibrated":eval_cond_lo,"p90_conditional_calibrated":eval_cond_hi,
+                      "p10_risk_conditioned":risk_eval_lo,"p90_risk_conditioned":risk_eval_hi,
+                      "predicted_high_stockout_risk_probability":risk_eval,
                       "stockout_hours_lag_1":e["stockout_hours_lag_1"].to_numpy(dtype=float),
                       "stockout_hours_roll_max_7":e["stockout_hours_roll_max_7"].to_numpy(dtype=float),
                       "seasonal_naive_lag7":np.maximum(e["sales_lag_7"].to_numpy(dtype=float),0),
