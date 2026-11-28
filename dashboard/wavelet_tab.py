@@ -27,7 +27,6 @@ def render_wavelet_tab(api_base, get_json, metric, compact_table):
     experiment = metrics.get("experiment", {})
     validation = metrics.get("validation", {})
     evaluation = metrics.get("evaluation", {})
-    comparisons = metrics.get("comparison", {})
     model_keys = [
         ("seasonal_naive_lag7", "Seasonal naive lag-7"),
         ("lightgbm_same_rows", "LightGBM (same rows)"),
