@@ -7,6 +7,10 @@ on:
       - "scripts/demand_censoring_sensitivity.py"
       - ".github/workflows/demand-censoring-sensitivity.yml"
 
+concurrency:
+  group: demand-censoring-sensitivity-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
