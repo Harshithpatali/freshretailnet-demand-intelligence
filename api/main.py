@@ -183,3 +183,50 @@ def wavelet_predictions(
         "series": series,
         "rows": df.head(limit).replace({float("nan"): None}).to_dict(orient="records"),
     }
+
+
+@app.get("/api/v1/monitoring/forecast-quality")
+def forecast_quality_monitoring():
+    return _safe_json("monitoring/forecast-quality/forecast_monitoring_summary.json")
+
+
+@app.get("/api/v1/monitoring/forecast-quality/daily")
+def forecast_quality_monitoring_daily(limit: int = Query(1000, ge=1, le=5000)):
+    key = "monitoring/forecast-quality/forecast_monitoring_daily.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"date", "mae", "wape_pct", "bias_pct", "calibrated_coverage_pct"})
+    return {"total": int(len(df)), "rows": df.head(limit).fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/monitoring/forecast-quality/drift")
+def forecast_quality_drift():
+    key = "monitoring/forecast-quality/forecast_monitoring_drift.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"variable", "psi", "status"})
+    return {"total": int(len(df)), "rows": df.fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/demand-censoring/sensitivity")
+def demand_censoring_sensitivity():
+    return _safe_json("diagnostics/demand-censoring/demand_censoring_sensitivity.json")
+
+
+@app.get("/api/v1/demand-censoring/sensitivity/buckets")
+def demand_censoring_sensitivity_buckets():
+    key = "diagnostics/demand-censoring/demand_censoring_sensitivity_by_bucket.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"stockout_bucket", "rows", "expected_lost_sales_proxy_units"})
+    return {"total": int(len(df)), "rows": df.fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/inventory/scenarios")
+def inventory_scenario_summary():
+    return _safe_json("inventory-scenario-artifacts/inventory_scenario_summary.json")
+
+
+@app.get("/api/v1/inventory/scenarios/comparison")
+def inventory_scenario_comparison():
+    key = "inventory-scenario-artifacts/inventory_scenario_comparison.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"scenario", "policy", "fill_rate_pct", "total_simulated_cost"})
+    return {"total": int(len(df)), "rows": df.fillna("").to_dict(orient="records")}
