@@ -8,6 +8,10 @@ on:
       - "src/simulate_inventory.py"
       - ".github/workflows/inventory-scenario-backtest.yml"
 
+concurrency:
+  group: inventory-scenario-backtest-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
