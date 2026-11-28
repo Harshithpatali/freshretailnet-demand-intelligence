@@ -39,10 +39,10 @@ jobs:
       - name: Install API and dashboard dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r api/requirements.txt -r dashboard/requirements.txt pytest ruff polars pyarrow lightgbm
+          pip install -r api/requirements.txt -r dashboard/requirements.txt pytest ruff polars pyarrow lightgbm duckdb
       - name: Compile Python modules
         run: python -m compileall -q api dashboard src scripts experiments tests
       - name: Run Ruff static checks
-        run: ruff check --select F --target-version py311 api dashboard tests scripts/run_small_demo.py scripts/artifact_provenance.py scripts/feature_availability_audit.py scripts/later_holdout_readiness.py scripts/forecast_monitoring.py scripts/demand_censoring_sensitivity.py src/train_quantile_models.py scripts/inventory_scenario_backtest.py scripts/prepare_freshretailnet_lt_r2.py scripts/freshretailnet_lt_inventory_backtest.py experiments/demand_intelligence/segment_rolling_backtest.py experiments/demand_intelligence/cluster_bootstrap_report.py
+        run: ruff check --select F --target-version py311 api dashboard tests scripts/run_small_demo.py scripts/artifact_provenance.py scripts/feature_availability_audit.py scripts/later_holdout_readiness.py scripts/forecast_monitoring.py scripts/demand_censoring_sensitivity.py src/train_quantile_models.py scripts/inventory_scenario_backtest.py scripts/prepare_freshretailnet_lt_r2.py scripts/freshretailnet_lt_inventory_backtest.py experiments/demand_intelligence/segment_rolling_backtest.py experiments/demand_intelligence/cluster_bootstrap_report.py scripts/full_dataset_eda.py
       - name: Run offline API and forecasting tests
         run: pytest -q tests
