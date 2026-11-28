@@ -72,3 +72,13 @@ def test_forecast_simulation_rejects_missing_prediction_column():
     })
     with pytest.raises(KeyError):
         simulate(frame, "missing_forecast", "bad", 1, 1, .05, 2, 1, 0)
+
+def test_small_demo_writes_reproducible_synthetic_artifacts(tmp_path):
+    from scripts.run_small_demo import run
+    result = run(tmp_path)
+    assert result["demo_type"] == "synthetic_only_not_benchmark_evidence"
+    assert result["input_rows"] == 42
+    assert result["store_product_series"] == 2
+    assert (tmp_path / "synthetic_forecasts.csv").exists()
+    assert (tmp_path / "inventory_policy_results.csv").exists()
+    assert (tmp_path / "demo_summary.json").exists()
