@@ -20,7 +20,7 @@
 | Calibrated mean interval width | 1.10751 |
 | Raw quantile crossing rate | 0.1246% |
 
-The calibrated interval remains below its 80% nominal target on this held-out period. The monitoring job emitted one warning: absolute P50 forecast bias of 8.07% exceeded the configured 5% threshold.
+The calibrated interval remains below its 80% nominal target on this held-out period. The verified run emitted one warning: absolute P50 forecast bias of 8.07% exceeded its configured 5% threshold. After that run, the source default for interval-coverage alerts was tightened from 75% to the 80% nominal target; the published JSON above is still from the earlier 75% configuration, and the new threshold awaits a fresh workflow result.
 
 ## Distribution-shift diagnostics
 
