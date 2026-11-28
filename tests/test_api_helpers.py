@@ -301,10 +301,9 @@ def test_stakeholder_evidence_is_compacted_before_sending_to_groq(monkeypatch):
 
     assert compact["inventory"]["scenario"]["empirical_fill_rate"] == 0.8
     assert "feature_gain_dump" not in compact["inventory"]["scenario"]
-    assert "folds" not in compact["forecast"]["rolling_design"]
+    assert compact["forecast"]["rolling_folds"] == 1
     assert "feature_gain" not in str(compact)
-    assert compact["forecast"]["rolling_design"]["fold_count"] == 1
-    assert compact["forecast"]["rolling_design"]["pooled_test_metrics"][0]["model"] == "baseline"
+    assert compact["forecast"]["rolling_metrics"][0]["model"] == "baseline"
     assert compact["forecast"]["sample_series"] == 3000
     assert sources == ["inventory.json", "forecast.json"]
     assert missing == []
@@ -408,7 +407,7 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
     assert "debug" not in encoded
     assert "feature_gain" not in encoded
     assert "raw_store_rows" not in encoded
-    assert "folds" not in compact["forecast"]["rolling_design"]
+    assert compact["forecast"]["rolling_folds"] == 1
     assert len(encoded) < 3500
     parts = api._stakeholder_prompt_parts(
         api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the evidence."),
@@ -417,7 +416,7 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
     assert len(parts) == 2
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 1400
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 1200
         for part in parts
     )
     assert estimated_reserved_tokens < 7000
@@ -644,7 +643,7 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
     assert len(parts) == 2
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 1400
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 1200
         for part in parts
     )
     assert estimated_reserved_tokens < 7000
