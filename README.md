@@ -186,6 +186,17 @@ Dashboard pages are available under **Inventory decisions → Service-level opti
 and **Experiments → Forecast research benchmark** after the corresponding workflows
 successfully publish their R2 artifacts.
 
+### First service-level optimizer result
+
+The first successful [Service-Level Inventory Decision Optimization run #46142217478](https://github.com/Harshithpatali/freshretailnet-demand-intelligence/actions/runs/46142217478)
+published the complete store/SKU plan and immutable artifacts to R2. It evaluated 2,613
+complete FreshRetailNet-LT series across 842 stores, with five calibration and five later
+seven-day windows per series. The balanced 90% expected-fill scenario produced 79.85%
+realized fill on the later windows; constrained and tight scenarios produced 60.28% and
+42.69%. This is a successful optimizer execution but an unsuccessful empirical SLA result:
+the current demand distribution and/or available replenishment capacity is not reliable
+enough for policy promotion. See [the optimizer backtest report](docs/results/inventory_optimizer_backtest.md).
+
 ## Run locally
 
 The raw Parquet files are stored in private R2 and are not included in this repository. A fully data-backed local run therefore requires access to the same raw objects or equivalent source files. There is no bundled sample dataset at present.
