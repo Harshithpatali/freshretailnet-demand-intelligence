@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,9 +18,14 @@ import numpy as np
 import pandas as pd
 from botocore.config import Config
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.artifact_provenance import build_provenance, upload_versioned_artifact
+
 REQUIRED = [
     "date", "actual_sale_amount", "p10", "p50", "p90",
-    "p10_calibrated", "p90_calibrated",
+    "p10_calibrated", "p90_calibrated", "stock_hour6_22_cnt",
 ]
 
 
@@ -68,8 +74,10 @@ def _overall_metrics(frame: pd.DataFrame) -> dict:
 
 def build_monitoring_report(frame: pd.DataFrame, nominal_coverage_pct: float = 80.0,
                             coverage_alert_floor_pct: float = 80.0,
+                            exposure_alert_floor_pct: float = 75.0,
+                            min_exposure_group_rows: int = 100,
                             bias_alert_pct: float = 5.0,
-                            psi_alert: float = 0.25) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
+                            psi_alert: float = 0.25) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return aggregate monitoring state, daily metrics and temporal PSI diagnostics."""
     missing = set(REQUIRED) - set(frame.columns)
     if missing:
@@ -79,6 +87,9 @@ def build_monitoring_report(frame: pd.DataFrame, nominal_coverage_pct: float = 8
     metric_cols = ["actual_sale_amount", "p10", "p50", "p90", "p10_calibrated", "p90_calibrated"]
     if not np.isfinite(data[metric_cols].to_numpy(dtype=float)).all():
         raise ValueError("forecast monitoring inputs contain non-finite values")
+    exposure = data["stock_hour6_22_cnt"].to_numpy(dtype=float)
+    if (exposure < 0).any() or not np.equal(exposure, np.floor(exposure)).all():
+        raise ValueError("stock_hour6_22_cnt must contain non-negative integer exposure hours")
     data = data.sort_values("date")
     y = data["actual_sale_amount"].to_numpy(dtype=float)
     p50 = np.maximum(data["p50"].to_numpy(dtype=float), 0.0)
@@ -104,6 +115,29 @@ def build_monitoring_report(frame: pd.DataFrame, nominal_coverage_pct: float = 8
     ).reset_index()
     daily["wape_pct"] = 100 * daily["absolute_error_sum"] / daily["actual_abs_sum"].clip(lower=1e-9)
     daily["bias_pct"] = 100 * daily["signed_error_sum"] / daily["actual_sum"].clip(lower=1e-9)
+
+    exposure_bins = [-0.5, 0.5, 2.5, 5.5, 9.5, 15.5, np.inf]
+    exposure_labels = ["0h", "1-2h", "3-5h", "6-9h", "10-15h", "16h+"]
+    data["stockout_exposure_bucket"] = pd.cut(
+        data["stock_hour6_22_cnt"], bins=exposure_bins, labels=exposure_labels,
+        include_lowest=True, ordered=True,
+    )
+    exposure_summary = data.groupby("stockout_exposure_bucket", observed=False, sort=False).agg(
+        rows=("_covered", "size"),
+        dates=("date", "nunique"),
+        mean_stockout_hours=("stock_hour6_22_cnt", "mean"),
+        mae=("_abs_error", "mean"),
+        calibrated_coverage_pct=("_covered", lambda x: float(x.mean() * 100)),
+        calibrated_mean_interval_width=("_interval_width", "mean"),
+        quantile_crossing_rate_pct=("_quantile_crossing", lambda x: float(x.mean() * 100)),
+    ).reset_index()
+    time_exposure = data.groupby(["date", "stockout_exposure_bucket"], observed=False, sort=True).agg(
+        rows=("_covered", "size"),
+        mean_stockout_hours=("stock_hour6_22_cnt", "mean"),
+        mae=("_abs_error", "mean"),
+        calibrated_coverage_pct=("_covered", lambda x: float(x.mean() * 100)),
+        calibrated_mean_interval_width=("_interval_width", "mean"),
+    ).reset_index()
 
     unique_dates = sorted(data["date"].unique())
     split_at = max(1, len(unique_dates) // 2)
@@ -141,6 +175,20 @@ def build_monitoring_report(frame: pd.DataFrame, nominal_coverage_pct: float = 8
     drift = pd.DataFrame(drift_rows)
     metrics = _overall_metrics(data)
     alerts = []
+    low_exposure_groups = exposure_summary[
+        (exposure_summary["rows"] >= min_exposure_group_rows)
+        & (exposure_summary["calibrated_coverage_pct"] < exposure_alert_floor_pct)
+    ]
+    for row in low_exposure_groups.itertuples(index=False):
+        alerts.append({
+            "severity": "warning",
+            "code": "STOCKOUT_SEGMENT_COVERAGE_LOW",
+            "message": (
+                f"Coverage for stockout exposure {row.stockout_exposure_bucket} "
+                f"is {row.calibrated_coverage_pct:.2f}% across {row.rows:,} rows "
+                f"(alert floor {exposure_alert_floor_pct:.2f}%)."
+            ),
+        })
     if metrics["calibrated_p10_p90_coverage_pct"] < coverage_alert_floor_pct:
         alerts.append({
             "severity": "warning", "code": "INTERVAL_COVERAGE_LOW",
@@ -168,6 +216,8 @@ def build_monitoring_report(frame: pd.DataFrame, nominal_coverage_pct: float = 8
         "evaluation_period": {"start": str(data["date"].min().date()), "end": str(data["date"].max().date())},
         "nominal_interval_coverage_pct": nominal_coverage_pct,
         "overall": metrics,
+        "stockout_exposure_coverage": exposure_summary.to_dict(orient="records"),
+        "time_by_stockout_exposure_rows": int(len(time_exposure)),
         "alerts": alerts,
         "alert_count": len(alerts),
         "drift_reference": reference_label,
@@ -176,6 +226,8 @@ def build_monitoring_report(frame: pd.DataFrame, nominal_coverage_pct: float = 8
         "drift_thresholds": {"low_below": 0.10, "moderate_below": psi_alert, "high_at_or_above": psi_alert},
         "operational_thresholds": {
             "coverage_alert_floor_pct": coverage_alert_floor_pct,
+            "exposure_coverage_alert_floor_pct": exposure_alert_floor_pct,
+            "minimum_exposure_group_rows_for_alert": min_exposure_group_rows,
             "absolute_bias_alert_pct": bias_alert_pct,
             "quantile_crossing_alert_pct": 0.5,
         },
@@ -185,9 +237,11 @@ def build_monitoring_report(frame: pd.DataFrame, nominal_coverage_pct: float = 8
             "Coverage and error metrics require matured actual outcomes and are therefore lagging indicators.",
             "PSI thresholds are operational heuristics and should be calibrated against business risk and historical variation.",
             "Actual targets are observed sales and may be censored by stockouts.",
+            "Exposure groups are descriptive strata; they do not identify the causal effect of stockouts.",
+            "Coverage estimates within small exposure-by-date cells are noisy; inspect row counts before interpretation.",
         ],
     }
-    return report, daily, drift
+    return report, daily, drift, exposure_summary, time_exposure
 
 
 def r2_client():
@@ -215,25 +269,60 @@ def main():
         source = root / "evaluation_quantile_predictions.csv"
         s3.download_file(bucket, "quantile-model-artifacts/evaluation_quantile_predictions.csv", str(source))
         frame = pd.read_csv(source)
-        report, daily, drift = build_monitoring_report(frame)
+        report, daily, drift, exposure_summary, time_exposure = build_monitoring_report(frame)
+        eval_start = str(pd.to_datetime(frame["date"]).min().date())
+        eval_end = str(pd.to_datetime(frame["date"]).max().date())
+        configuration = {
+            "nominal_coverage_pct": 80.0,
+            "coverage_alert_floor_pct": 80.0,
+            "exposure_coverage_alert_floor_pct": 75.0,
+            "minimum_exposure_group_rows_for_alert": 100,
+            "bias_alert_pct": 5.0,
+            "psi_alert": 0.25,
+            "exposure_bins_hours": ["0", "1-2", "3-5", "6-9", "10-15", "16+"],
+            "metrics": ["MAE", "RMSE", "WAPE", "bias", "P10-P90 coverage", "interval width"],
+        }
+        provenance = build_provenance(
+            "Forecast Quality and Stockout-Segment Coverage Monitoring",
+            {"quantile-model-artifacts/evaluation_quantile_predictions.csv": source},
+            eval_start, eval_end, configuration,
+            outputs=[
+                "monitoring/forecast-quality/forecast_monitoring_summary.json",
+                "monitoring/forecast-quality/forecast_monitoring_daily.csv",
+                "monitoring/forecast-quality/forecast_monitoring_drift.csv",
+                "monitoring/forecast-quality/forecast_monitoring_exposure.csv",
+                "monitoring/forecast-quality/forecast_monitoring_time_exposure.csv",
+            ],
+        )
+        report["provenance"] = provenance
         report_path = root / "forecast_monitoring_summary.json"
         daily_path = root / "forecast_monitoring_daily.csv"
         drift_path = root / "forecast_monitoring_drift.csv"
+        exposure_path = root / "forecast_monitoring_exposure.csv"
+        time_exposure_path = root / "forecast_monitoring_time_exposure.csv"
         report_path.write_text(json.dumps(report, indent=2, default=str))
         daily.to_csv(daily_path, index=False)
         drift.to_csv(drift_path, index=False)
+        exposure_summary.to_csv(exposure_path, index=False)
+        time_exposure.to_csv(time_exposure_path, index=False)
         uploads = [
             (report_path, "monitoring/forecast-quality/forecast_monitoring_summary.json", "application/json"),
             (daily_path, "monitoring/forecast-quality/forecast_monitoring_daily.csv", "text/csv"),
             (drift_path, "monitoring/forecast-quality/forecast_monitoring_drift.csv", "text/csv"),
+            (exposure_path, "monitoring/forecast-quality/forecast_monitoring_exposure.csv", "text/csv"),
+            (time_exposure_path, "monitoring/forecast-quality/forecast_monitoring_time_exposure.csv", "text/csv"),
         ]
         for path, key, content_type in uploads:
-            s3.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": content_type})
-            size = s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
-            if size != path.stat().st_size:
-                raise RuntimeError(f"R2 verification failed for {key}")
-            print(f"Verified s3://{bucket}/{key} ({size:,} bytes)")
-        print(json.dumps(report, indent=2))
+            destinations = upload_versioned_artifact(s3, bucket, path, key, content_type, provenance)
+            print(f"Published stable and immutable copies: {destinations[0]} ; {destinations[1]}")
+        manifest_path = root / "forecast_monitoring_manifest.json"
+        manifest_path.write_text(json.dumps(provenance, indent=2, sort_keys=True))
+        upload_versioned_artifact(
+            s3, bucket, manifest_path,
+            "monitoring/forecast-quality/forecast_monitoring_manifest.json",
+            "application/json", provenance,
+        )
+        print(json.dumps(report, indent=2, default=str))
 
 
 if __name__ == "__main__":
