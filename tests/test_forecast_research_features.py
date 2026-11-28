@@ -62,3 +62,21 @@ def test_ensemble_weights_are_nonnegative_and_sum_to_one():
     assert set(weights) == set(candidates)
     assert all(value >= 0 for value in weights.values())
     assert sum(weights.values()) == pytest.approx(1.0, abs=1e-7)
+
+
+def test_fixed_seed_series_sample_is_independent_of_input_row_order():
+    from experiments.forecast_research.forecast_research_benchmark import (
+        select_deterministic_series_sample,
+    )
+
+    pairs = pd.DataFrame({
+        "store_id": ["s3", "s1", "s2", "s1", "s3", "s2"],
+        "product_id": ["p1", "p2", "p1", "p1", "p2", "p2"],
+    })
+    first = select_deterministic_series_sample(pairs, sample_size=4)
+    shuffled = select_deterministic_series_sample(
+        pairs.sample(frac=1, random_state=91), sample_size=4
+    )
+    pd.testing.assert_frame_equal(first, shuffled)
+    assert len(first) == 4
+    assert not first.duplicated(["store_id", "product_id"]).any()
