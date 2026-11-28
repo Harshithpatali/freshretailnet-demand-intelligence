@@ -270,6 +270,71 @@ def dataset_eda():
     return _safe_json("dataset-eda/full_dataset_eda.json")
 
 
+@app.get("/api/v1/inventory/optimizer")
+def inventory_optimizer_summary():
+    """Service-level MILP results from the external FreshRetailNet-LT cohort."""
+    return _safe_json("inventory-optimizer-artifacts/inventory_optimizer_summary.json")
+
+
+@app.get("/api/v1/inventory/optimizer/stores")
+def inventory_optimizer_stores(
+    scenario: str | None = None,
+    limit: int = Query(5000, ge=1, le=20000),
+):
+    key = "inventory-optimizer-artifacts/inventory_optimizer_store_results.csv"
+    frame = _safe_csv(key)
+    frame = _require_columns(
+        frame, key,
+        {"store_id", "scenario", "target_fill_rate", "achieved_fill_rate", "service_target_met"},
+    )
+    if scenario:
+        frame = frame[frame["scenario"].astype(str) == scenario]
+    return {
+        "total": int(len(frame)),
+        "rows": frame.head(limit).fillna("").to_dict(orient="records"),
+    }
+
+
+@app.get("/api/v1/inventory/optimizer/decisions")
+def inventory_optimizer_decisions(
+    scenario: str | None = None,
+    store_id: str | None = None,
+    limit: int = Query(2000, ge=1, le=10000),
+):
+    key = "inventory-optimizer-artifacts/inventory_optimizer_item_decisions.csv"
+    frame = _safe_csv(key)
+    frame = _require_columns(frame, key, {"store_id", "product_id", "scenario", "order_qty"})
+    if scenario:
+        frame = frame[frame["scenario"].astype(str) == scenario]
+    if store_id:
+        frame = frame[frame["store_id"].astype(str) == str(store_id)]
+    return {
+        "total": int(len(frame)),
+        "rows": frame.head(limit).fillna("").to_dict(orient="records"),
+    }
+
+
+@app.get("/api/v1/forecast-research/summary")
+def forecast_research_summary():
+    return _safe_json("forecast-research-artifacts/forecast_research_summary.json")
+
+
+@app.get("/api/v1/forecast-research/rolling-comparison")
+def forecast_research_rolling_comparison():
+    key = "forecast-research-artifacts/forecast_research_rolling_comparison.csv"
+    frame = _safe_csv(key)
+    frame = _require_columns(frame, key, {"model", "mae", "rmse", "wape_pct", "bias_pct"})
+    return {"total": int(len(frame)), "rows": frame.fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/forecast-research/final-comparison")
+def forecast_research_final_comparison():
+    key = "forecast-research-artifacts/forecast_research_final_comparison.csv"
+    frame = _safe_csv(key)
+    frame = _require_columns(frame, key, {"model", "mae", "rmse", "wape_pct", "bias_pct"})
+    return {"total": int(len(frame)), "rows": frame.fillna("").to_dict(orient="records")}
+
+
 @app.get("/api/v1/model-metrics")
 def model_metrics():
     return _safe_json("model-artifacts/metrics.json")
