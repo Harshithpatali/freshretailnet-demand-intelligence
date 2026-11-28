@@ -1,6 +1,12 @@
 name: FreshRetailNet SQL and full dataset EDA
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/sql_eda.py"
+      - "scripts/full_dataset_eda.py"
+      - ".github/workflows/sql-eda.yml"
   workflow_dispatch:
 
 permissions:
