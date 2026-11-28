@@ -302,7 +302,7 @@ def test_stakeholder_evidence_is_compacted_before_sending_to_groq(monkeypatch):
     assert compact["inventory"]["scenario"]["empirical_fill_rate"] == 0.8
     assert "feature_gain_dump" not in compact["inventory"]["scenario"]
     assert "folds" not in compact["forecast"]["rolling_design"]
-    assert "feature_gain" not in encoded
+    assert "feature_gain" not in str(compact)
     assert compact["forecast"]["rolling_design"]["fold_count"] == 1
     assert compact["forecast"]["rolling_design"]["pooled_test_metrics"][0]["model"] == "baseline"
     assert compact["forecast"]["sample_series"] == 3000
