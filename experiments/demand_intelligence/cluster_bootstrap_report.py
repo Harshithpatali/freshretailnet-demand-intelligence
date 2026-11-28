@@ -190,6 +190,22 @@ def main():
         if not np.isfinite(values).all():
             raise RuntimeError("Non-finite prediction values; refusing to publish intervals")
         uncertainty = paired_cluster_bootstrap(frame, reps=reps, seed=seed)
+        eval_start = str(pd.to_datetime(frame["target_date"]).min().date())
+        eval_end = str(pd.to_datetime(frame["target_date"]).max().date())
+        configuration = {
+            "bootstrap_method": "paired store-product cluster bootstrap",
+            "replicates": reps,
+            "seed": seed,
+            "batch_size": 32,
+            "estimands": ["relative MAE improvement", "relative RMSE improvement", "WAPE improvement pp", "bias change pp"],
+            "uncertainty_scope": "cross-sectional clusters conditional on the temporal test windows",
+        }
+        output_keys = [COMPARISON_CSV_KEY, COMPARISON_MD_KEY, REPORT_KEY]
+        provenance = build_provenance(
+            "Paired Cluster Bootstrap for Segment Rolling Backtest",
+            {PREDICTIONS_KEY: prediction_path},
+            eval_start, eval_end, configuration, outputs=output_keys,
+        )
         comparison = []
         for horizon, group in frame.groupby("horizon_days", sort=True):
             n = len(group)
@@ -259,6 +275,7 @@ def main():
             report = json.loads(report_path.read_text())
         except Exception as exc:
             print(f"Existing JSON report unavailable; publishing a standalone uncertainty report: {exc}")
+        report["provenance"] = provenance
         report["paired_cluster_bootstrap_uncertainty"] = uncertainty
         report["comparison_sample_sizes"] = [
             {key: row[key] for key in ("horizon_days", "evaluation_rows", "store_product_clusters", "test_folds", "target_dates")}
