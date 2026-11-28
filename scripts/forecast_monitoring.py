@@ -67,7 +67,7 @@ def _overall_metrics(frame: pd.DataFrame) -> dict:
 
 
 def build_monitoring_report(frame: pd.DataFrame, nominal_coverage_pct: float = 80.0,
-                            coverage_alert_floor_pct: float = 75.0,
+                            coverage_alert_floor_pct: float = 80.0,
                             bias_alert_pct: float = 5.0,
                             psi_alert: float = 0.25) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
     """Return aggregate monitoring state, daily metrics and temporal PSI diagnostics."""
