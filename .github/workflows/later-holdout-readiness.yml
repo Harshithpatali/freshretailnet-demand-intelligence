@@ -1,0 +1,32 @@
+name: Later Untouched Holdout Readiness Gate
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: later-holdout-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-later-holdout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install data and provenance dependencies
+        run: python -m pip install --upgrade boto3 polars pyarrow
+      - name: Compile later-holdout gate
+        run: python -m py_compile scripts/later_holdout_readiness.py scripts/artifact_provenance.py
+      - name: Require a later untouched 14-day snapshot
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python -u scripts/later_holdout_readiness.py
