@@ -471,6 +471,15 @@ with tabs[9]:
         with c2: metric("Stockout-affected rows", f"{censoring.get('stockout_affected_row_rate_pct', float('nan')):.1f}%")
         with c3: metric("Central imputation proxy", f"{censoring.get('expected_lost_sales_proxy_units', 0):,.1f}")
         st.caption(f"Evaluation period: {censoring.get('evaluation_start')} to {censoring.get('evaluation_end')}")
+        validation = censoring.get("reconstruction_validation", {})
+        if validation:
+            st.markdown("#### Out-of-time pseudo-censoring validation")
+            st.caption("Known in-stock evaluation hours are predicted with training-only rates and compared with observed sales. This validates available-hour predictions, not latent demand during real stockouts.")
+            v1, v2, v3, v4 = st.columns(4)
+            with v1: metric("Validation hours", f"{validation.get('rows', 0):,}")
+            with v2: metric("Hourly MAE", f"{validation.get('hourly_mae', float('nan')):.3f}")
+            with v3: metric("Hourly WAPE", f"{validation.get('hourly_wape_pct', float('nan')):.1f}%")
+            with v4: metric("Fallback rate", f"{validation.get('global_fallback_rate_pct', float('nan')):.1f}%")
         st.info(censoring.get("interpretation", "Sensitivity assumptions only."))
         try:
             bucket_data = get_json("/api/v1/demand-censoring/sensitivity/buckets")
