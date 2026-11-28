@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "scripts/forecast_monitoring.py"
+      - "scripts/artifact_provenance.py"
       - ".github/workflows/forecast-monitoring.yml"
       - "src/train_quantile_models.py"
 
