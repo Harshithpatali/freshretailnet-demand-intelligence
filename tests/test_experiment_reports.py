@@ -16,7 +16,14 @@ from scripts.forecast_monitoring import build_monitoring_report, population_stab
 from scripts.inventory_scenario_backtest import run_scenarios
 from src.simulate_inventory import simulate
 from scripts.freshretailnet_lt_inventory_backtest import select_continuous_h1_predictions
-from src.train_quantile_models import conditional_conformal_adjustments, calibrated_interval_by_group
+from src.train_quantile_models import (
+    conditional_conformal_adjustments,
+    calibrated_interval_by_group,
+    risk_score_edges,
+    risk_score_groups,
+    risk_conformal_adjustments,
+    calibrated_interval_by_risk,
+)
 from scripts.later_holdout_readiness import validate_later_holdout
 import polars as pl
 
@@ -280,3 +287,37 @@ def test_freshretailnet_lt_inventory_rejects_noncontiguous_target_dates():
     } for date in dates]
     with pytest.raises(RuntimeError, match="not contiguous"):
         select_continuous_h1_predictions(pd.DataFrame(rows))
+
+
+
+def test_risk_score_edges_are_fitted_on_validation_and_reused_for_eval():
+    validation_prob = np.linspace(0.0, 1.0, 1000)
+    edges = risk_score_edges(validation_prob, bins=10)
+    groups = risk_score_groups(validation_prob, edges)
+    assert len(edges) == 11
+    assert groups.min() == 0
+    assert groups.max() == 9
+    assert np.all(np.diff(groups) >= 0)
+
+
+def test_risk_conditional_conformal_uses_validation_deciles():
+    n = 2000
+    validation_prob = np.linspace(0.001, 0.999, n)
+    y = np.where(validation_prob >= 0.8, 4.0, 1.0)
+    lower = np.zeros(n)
+    upper = np.zeros(n)
+    edges, adjustments, audit = risk_conformal_adjustments(
+        y, lower, upper, validation_prob, global_qhat=1.0,
+        min_group_rows=100, prior_strength_rows=100,
+    )
+    assert len(edges) == 11
+    assert len(audit) == 10
+    assert adjustments[9] > adjustments[0]
+    summary, lo, hi = calibrated_interval_by_risk(
+        y,
+        {0.10: lower, 0.50: np.ones(n), 0.90: upper + 1.0},
+        validation_prob, edges, adjustments,
+    )
+    assert summary["context_feature"] == "predicted_high_stockout_risk_decile"
+    assert hi[-1] > hi[0]
+    assert len(lo) == n
