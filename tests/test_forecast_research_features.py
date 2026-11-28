@@ -1,6 +1,7 @@
 """Unit tests for leakage-safe Fourier/STL/spectral research features."""
 import numpy as np
 import pandas as pd
+import pytest
 
 from experiments.forecast_research.forecast_research_benchmark import (
     _spectral_summary,
