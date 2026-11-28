@@ -361,6 +361,63 @@ def inventory_scenario_comparison():
 
 
 
+@app.get("/api/v1/inventory/optimization")
+def inventory_optimization_summary():
+    return _safe_json("inventory-optimization-artifacts/inventory_optimization_summary.json")
+
+
+@app.get("/api/v1/inventory/optimization/scenarios")
+def inventory_optimization_scenarios():
+    key = "inventory-optimization-artifacts/inventory_optimization_scenarios.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"scenario", "target_service_level_pct", "capacity_days", "expected_fill_rate_pct"})
+    return {"total": int(len(df)), "rows": df.fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/inventory/optimization/plan")
+def inventory_optimization_plan(
+    store_id: str | None = None,
+    product_id: str | None = None,
+    limit: int = Query(1000, ge=1, le=5000),
+):
+    key = "inventory-optimization-artifacts/inventory_optimization_reference_plan.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"store_id", "product_id", "recommended_order_up_to_units"})
+    if store_id is not None:
+        df = df[df["store_id"].astype(str) == str(store_id)]
+    if product_id is not None:
+        df = df[df["product_id"].astype(str) == str(product_id)]
+    return {"total": int(len(df)), "rows": df.head(limit).fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/research/time-series")
+def time_series_research_summary():
+    return _safe_json("timeseries-research-artifacts/timeseries_research_summary.json")
+
+
+@app.get("/api/v1/research/time-series/comparison")
+def time_series_research_comparison():
+    key = "timeseries-research-artifacts/timeseries_model_comparison.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"model", "evaluation_mae", "evaluation_rmse", "evaluation_wape_pct"})
+    return {"total": int(len(df)), "rows": df.fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/research/time-series/ablation")
+def time_series_research_ablation():
+    key = "timeseries-research-artifacts/timeseries_wavelet_ablation.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"comparison", "mae_change_pct", "wape_change_pct"})
+    return {"total": int(len(df)), "rows": df.fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/research/time-series/diagnostics")
+def time_series_research_diagnostics(limit: int = Query(2000, ge=1, le=5000)):
+    key = "timeseries-research-artifacts/timeseries_feature_diagnostics.csv"
+    df = _safe_csv(key)
+    return {"total": int(len(df)), "rows": df.head(limit).fillna("").to_dict(orient="records")}
+
+
 @app.get("/api/v1/monitoring/forecast-quality/exposure")
 def forecast_quality_monitoring_exposure():
     key = "monitoring/forecast-quality/forecast_monitoring_exposure.csv"
