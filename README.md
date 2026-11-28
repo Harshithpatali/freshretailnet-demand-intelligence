@@ -192,19 +192,30 @@ See [the demo guide](docs/SMALL_DATA_DEMO.md).
 
 ## Experiment uncertainty and sample sizes
 
-The multi-window segment rolling backtest publishes:
-- `segment_rolling_backtest_comparison.csv`: paired baseline/challenger metrics,
-  95% cluster-bootstrap intervals, evaluation row counts, store-product clusters,
-  test folds and bootstrap replicate counts.
-- `segment_rolling_backtest_comparison.md`: readable comparison report.
-- `segment_rolling_backtest_report.json`: full fold audits, selection diagnostics,
-  sample-size summary and bootstrap methodology.
-
+The multi-window segment rolling backtest publishes fold-level predictions and
+point estimates first. A separate post-hoc cluster-bootstrap step then reuses
+those predictions (without retraining) to publish paired 95% intervals,
+evaluation row counts, store-product clusters, test folds and replicate counts.
 Intervals quantify cross-sectional cluster uncertainty, not future temporal
-window uncertainty. See [artifact failure and recovery behaviour](docs/ARTIFACT_FAILURE_HANDLING.md).
+window uncertainty. See [extended validation and monitoring](docs/VALIDATION_AND_MONITORING.md)
+and [artifact failure and recovery behaviour](docs/ARTIFACT_FAILURE_HANDLING.md).
 
 ## Quality checks
 
 GitHub Actions compiles the Python modules, runs offline API/artifact and inventory
 forecasting tests, and runs Ruff static checks. The checks monkeypatch R2 access;
 they do not require production credentials or assert that remote artifacts exist.
+
+
+## Extended validation and monitoring
+
+This repository now includes separate workflows for:
+- five-fold chronological demand-segment validation with expanding training windows;
+- post-hoc paired cluster bootstrap without re-training models;
+- historical in-stock-hour demand-censoring sensitivity scenarios;
+- multi-lead-time, review-cycle, capacity, MOQ and pack-size inventory simulations;
+- daily forecast error, interval coverage, quantile crossing and PSI drift monitoring.
+
+The API and Streamlit dashboard include views for forecast monitoring, demand-censoring sensitivity and inventory scenario comparisons. See [docs/VALIDATION_AND_MONITORING.md](docs/VALIDATION_AND_MONITORING.md) for assumptions, limitations, workflow names and API paths.
+
+**Important:** the new workflows have to complete successfully and publish their R2 artifacts before their dashboard panels show data. The initial monitoring workflow evaluates the existing held-out prediction artifact; it is not yet a continuously refreshed live production monitor.
