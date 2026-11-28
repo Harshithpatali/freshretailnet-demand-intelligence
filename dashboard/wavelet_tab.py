@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
-def render_wavelet_tab(api_base, get_json, metric, compact_table):
+def render_wavelet_tab(api_base, get_json, metric, compact_table, render_structured_data):
     st.subheader("Wavelet research & benchmark")
     st.caption(
         "A same-row comparison of seasonal-naive lag-7, baseline LightGBM, "
@@ -200,7 +200,7 @@ def render_wavelet_tab(api_base, get_json, metric, compact_table):
         "limitations": experiment.get("limitations"),
         "generated_at_utc": experiment.get("generated_at_utc"),
     }
-    st.json(config)
+    render_structured_data(config, "Wavelet experiment configuration")
     st.warning(
         "The target is observed sales, not necessarily uncensored demand. Wavelet features use only "
         "the preceding 32 observations; they cannot recover demand hidden by stockouts. "

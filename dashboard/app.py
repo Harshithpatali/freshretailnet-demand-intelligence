@@ -4,49 +4,247 @@ import requests
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
 
-st.set_page_config(page_title="FreshRetailNet | Demand Intelligence", page_icon="📦", layout="wide")
+from presentation import flatten_structured_data
+
+st.set_page_config(
+    page_title="FreshRetailNet | Demand Intelligence",
+    page_icon="📦",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 API = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+pio.templates.default = "plotly_dark"
 
 st.markdown("""
 <style>
-.block-container {padding: 1.25rem 1.4rem 2.5rem; max-width: 1480px;}
-[data-testid="stDataFrame"], [data-testid="stTable"] {width: 100%; overflow-x: auto; border-radius: 12px;}
-[data-testid="stAppViewContainer"] {background: linear-gradient(145deg, #f7fafc 0%, #eef4f6 48%, #f8fafc 100%);}
-[data-testid="stSidebar"] {background: linear-gradient(180deg, #111c2e 0%, #142b3c 100%);}
-[data-testid="stSidebar"] * {color: #e7f0f5;}
-[data-testid="stSidebar"] [data-baseweb="select"] * {color: #102033;}
-[data-testid="stSidebar"] [role="radiogroup"] label {padding: .36rem .5rem; border-radius: 9px;}
-[data-testid="stSidebar"] [role="radiogroup"] label:hover {background: rgba(255,255,255,.09);}
-h1, h2, h3 {letter-spacing: -.025em;}
-h2 {margin-top: 1.5rem;}
-[data-testid="stMetric"] {background: linear-gradient(160deg, #ffffff 0%, #f7fbfc 100%); border: 1px solid rgba(15, 41, 61, .11); border-left: 3px solid #0f8b80; padding: 14px 16px; border-radius: 16px; box-shadow: 0 5px 18px rgba(15, 41, 61, .045);}
-[data-testid="stMetricLabel"] {font-weight: 650; color: #496274;}
-[data-testid="stMetricValue"] {color: #102b3b; font-variant-numeric: tabular-nums;}
-[data-testid="stVerticalBlockBorderWrapper"] {background: rgba(255,255,255,.75); border-color: rgba(15,41,61,.1); box-shadow: 0 6px 22px rgba(15,41,61,.035);}
-[data-testid="stPlotlyChart"] {background: rgba(255,255,255,.78); border: 1px solid rgba(15,41,61,.08); border-radius: 16px; padding: .35rem;}
-[data-testid="stDataFrame"], [data-testid="stTable"] {border: 1px solid rgba(15,41,61,.1); background: white;}
-[data-testid="stMarkdownContainer"] a {color: #087e78; font-weight: 600;}
-.frn-hero {display:flex; align-items:center; justify-content:space-between; gap:1.2rem; margin: .15rem 0 1.2rem; padding: 1.35rem 1.6rem; border-radius: 20px; color:#f7fbff; background:linear-gradient(112deg,#101d31 0%,#164354 58%,#087e78 100%); box-shadow:0 14px 32px rgba(15,41,61,.15);}
-.frn-hero h1 {font-size:clamp(1.55rem,3vw,2.35rem); font-weight:780; margin:0; color:#ffffff; line-height:1.12;}
-.frn-hero p {margin:.5rem 0 0; color:#d9e9ef; font-size:.96rem;}
-.frn-hero .frn-tag {font-size:.72rem; letter-spacing:.13em; font-weight:750; color:#c9f5e9; border:1px solid rgba(201,245,233,.35); background:rgba(255,255,255,.08); padding:.55rem .8rem; border-radius:999px; white-space:nowrap;}
-.frn-kicker {font-size:.72rem; font-weight:750; letter-spacing:.15em; text-transform:uppercase; color:#9ddbd1; margin-bottom:.35rem;}
-.stButton button, .stDownloadButton button {border:0; color:#fff; background:linear-gradient(110deg,#0f766e,#0b8d86); font-weight:700; box-shadow:0 5px 14px rgba(15,118,110,.17);}
-.stButton button:hover, .stDownloadButton button:hover {border:0; background:linear-gradient(110deg,#115e59,#0f766e); color:#fff; transform:translateY(-1px);}
-[data-testid="stMetricValue"] {font-size: clamp(1.25rem, 3vw, 2rem);}
-[data-testid="stTabs"] [role="tablist"] {gap: .35rem; border-bottom: 1px solid rgba(128,128,128,.20);}
-[data-testid="stTabs"] button[role="tab"] {border-radius: 10px 10px 0 0; padding: .55rem .9rem;}
-.stButton button, .stDownloadButton button, [data-testid="stFormSubmitButton"] button {border-radius: 11px; min-height: 2.7rem;}
-[data-baseweb="select"] > div {border-radius: 10px;}
-[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 14px;}
+:root {
+  --frn-bg: #0b0f14;
+  --frn-panel: #151b24;
+  --frn-panel-soft: #1b222d;
+  --frn-line: rgba(183, 198, 214, .13);
+  --frn-text: #edf2f7;
+  --frn-muted: #9aa9b9;
+  --frn-teal: #49d9c5;
+  --frn-blue: #66a9ff;
+}
+html, body, [data-testid="stAppViewContainer"] {
+  background: radial-gradient(ellipse at 72% -18%, #1b303c 0%, #10161e 36%, var(--frn-bg) 78%) !important;
+  color: var(--frn-text);
+}
+[data-testid="stHeader"] { background: rgba(11, 15, 20, .86); }
+[data-testid="stToolbar"] { right: 1rem; }
+[data-testid="stAppViewContainer"] > .main { background: transparent; }
+[data-testid="stMainBlockContainer"], .block-container {
+  max-width: 1680px;
+  padding: 1.25rem clamp(.8rem, 2.2vw, 2rem) 3rem;
+}
+[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #111720 0%, #0d1219 100%);
+  border-right: 1px solid var(--frn-line);
+}
+[data-testid="stSidebar"] > div:first-child { background: transparent; }
+[data-testid="stSidebar"] * { color: #d9e2ec; }
+[data-testid="stSidebar"] [data-baseweb="select"] *,
+[data-testid="stSidebar"] input { color: #edf2f7 !important; }
+[data-testid="stSidebar"] [role="radiogroup"] label {
+  padding: .45rem .62rem;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  transition: background .15s ease, border-color .15s ease;
+}
+[data-testid="stSidebar"] [role="radiogroup"] label:hover {
+  background: rgba(73, 217, 197, .08);
+  border-color: rgba(73, 217, 197, .18);
+}
+h1, h2, h3, h4, p, label, li, span, div {
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+h1, h2, h3 { letter-spacing: -.025em; color: #f4f7fb; }
+h2 { margin-top: 1.35rem; }
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stCaptionContainer"], [data-testid="stAlert"] p {
+  line-height: 1.52;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: #c7d1dd;
+}
+[data-testid="stMarkdownContainer"] a { color: var(--frn-teal); }
+[data-testid="stMetric"] {
+  min-height: 106px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: linear-gradient(155deg, #202833 0%, #151c25 70%, #142329 100%);
+  border: 1px solid rgba(158, 183, 205, .15);
+  border-radius: 16px;
+  padding: 14px 17px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .23);
+}
+[data-testid="stMetricLabel"] {
+  color: #aab8c7 !important;
+  font-weight: 650;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+[data-testid="stMetricValue"] {
+  color: #f3f7fb !important;
+  font-size: clamp(1.45rem, 2.8vw, 2.25rem);
+  font-weight: 740;
+  letter-spacing: -.035em;
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+[data-testid="stMetricDelta"] { white-space: normal; }
+[data-testid="stVerticalBlockBorderWrapper"] {
+  background: rgba(22, 29, 39, .78);
+  border: 1px solid var(--frn-line);
+  border-radius: 15px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .16);
+}
+[data-testid="stPlotlyChart"] {
+  background: #111820;
+  border: 1px solid var(--frn-line);
+  border-radius: 15px;
+  padding: .25rem;
+}
+[data-testid="stTabs"] [role="tablist"] {
+  gap: .4rem;
+  border-bottom: 1px solid var(--frn-line);
+}
+[data-testid="stTabs"] button[role="tab"] {
+  border-radius: 9px 9px 0 0;
+  padding: .58rem .9rem;
+}
+[data-testid="stExpander"] {
+  border: 1px solid var(--frn-line);
+  border-radius: 12px;
+  background: rgba(21, 27, 36, .72);
+}
+[data-baseweb="select"] > div, [data-baseweb="input"] > div,
+[data-baseweb="textarea"] > div {
+  background: #141b24;
+  border-color: rgba(177, 194, 211, .2);
+  border-radius: 10px;
+}
+input, textarea { color: #edf2f7 !important; }
+.stButton button, .stDownloadButton button, [data-testid="stFormSubmitButton"] button {
+  min-height: 2.65rem;
+  border: 1px solid rgba(73, 217, 197, .28);
+  border-radius: 10px;
+  background: linear-gradient(110deg, #087e79, #0c9b8c);
+  color: #f7fffd;
+  font-weight: 720;
+  box-shadow: 0 5px 18px rgba(0, 155, 140, .16);
+}
+.stButton button:hover, .stDownloadButton button:hover {
+  background: linear-gradient(110deg, #0b958b, #12aa98);
+  color: #fff;
+  border-color: rgba(73, 217, 197, .65);
+  transform: translateY(-1px);
+}
+.frn-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.3rem;
+  margin: .1rem 0 1.25rem;
+  padding: 1.45rem 1.65rem;
+  border: 1px solid rgba(100, 190, 193, .22);
+  border-radius: 18px;
+  color: #f7fbff;
+  background: linear-gradient(112deg, #171d26 0%, #172c38 58%, #123b3a 100%);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .28);
+}
+.frn-hero h1 {
+  margin: 0;
+  color: #f6fafc;
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+  font-weight: 790;
+  line-height: 1.18;
+}
+.frn-hero p { margin: .5rem 0 0; color: #b5c8d4; font-size: .94rem; }
+.frn-hero .frn-tag {
+  flex: 0 0 auto;
+  padding: .52rem .75rem;
+  border: 1px solid rgba(73, 217, 197, .28);
+  border-radius: 999px;
+  background: rgba(73, 217, 197, .08);
+  color: #82e9d9;
+  font-size: .68rem;
+  font-weight: 760;
+  letter-spacing: .12em;
+  white-space: normal;
+  text-align: center;
+}
+.frn-kicker {
+  margin-bottom: .36rem;
+  color: #69dcca;
+  font-size: .69rem;
+  font-weight: 780;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.frn-section-note {
+  color: #9eafbf;
+  font-size: .86rem;
+  line-height: 1.5;
+}
+.frn-table-shell {
+  width: 100%;
+  max-height: 520px;
+  overflow: auto;
+  border: 1px solid rgba(168, 188, 208, .15);
+  border-radius: 12px;
+  background: #111820;
+  scrollbar-color: #405365 #151c25;
+}
+table.frn-data-table {
+  width: 100%;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: #e5ecf3;
+  font-size: .86rem;
+  line-height: 1.45;
+}
+table.frn-data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: .72rem .8rem;
+  background: #202a36;
+  color: #e7f0f7;
+  font-weight: 730;
+  text-align: left;
+  border-bottom: 1px solid rgba(168, 188, 208, .2);
+  white-space: normal;
+}
+table.frn-data-table tbody td {
+  max-width: 420px;
+  padding: .62rem .8rem;
+  vertical-align: top;
+  color: #d0dae5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  border-bottom: 1px solid rgba(168, 188, 208, .09);
+}
+table.frn-data-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, .025); }
+table.frn-data-table tbody tr:hover { background: rgba(73, 217, 197, .065); }
+.frn-data-table td:first-child { color: #eff5fa; font-weight: 590; }
 @media (max-width: 760px) {
-  .block-container {padding: .8rem .75rem 2rem;}
-  h1 {font-size: 1.6rem !important;}
-  h2 {font-size: 1.22rem !important;}
-  h3 {font-size: 1.05rem !important;}
-  [data-testid="stMetric"] {padding: 10px;}
+  [data-testid="stMainBlockContainer"], .block-container { padding: .8rem .7rem 2rem; }
+  .frn-hero { align-items: flex-start; padding: 1.05rem 1rem; }
+  .frn-hero .frn-tag { max-width: 110px; font-size: .58rem; }
+  h1 { font-size: 1.55rem !important; }
+  h2 { font-size: 1.2rem !important; }
+  h3 { font-size: 1.04rem !important; }
+  [data-testid="stMetric"] { min-height: 92px; padding: 10px 12px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -61,7 +259,35 @@ def metric(label, value, help_text=None):
     st.metric(label, value, help=help_text)
 
 def compact_table(frame, height=300):
-    st.dataframe(frame, use_container_width=True, hide_index=True, height=height)
+    """Render an escaped, scrollable HTML table so text never gets canvas-truncated."""
+    if frame is None or frame.empty:
+        st.info("No rows to display.")
+        return
+    safe = frame.copy()
+    html = safe.to_html(
+        index=False,
+        escape=True,
+        border=0,
+        classes="frn-data-table",
+        na_rep="—",
+        justify="left",
+    )
+    max_height = max(150, min(int(height), 640))
+    st.markdown(
+        f'<div class="frn-table-shell" style="max-height:{max_height}px">{html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_structured_data(payload, title="Details"):
+    """Display nested API JSON as wrapped key/value rows instead of a raw JSON block."""
+    if title:
+        st.markdown(f"#### {title}")
+    frame = flatten_structured_data(payload)
+    if frame.empty:
+        st.info("No structured details were returned.")
+        return
+    compact_table(frame, height=min(420, 115 + 32 * len(frame)))
 
 def select_store_product(prefix: str):
     """Render searchable, dependent Store and Product dropdowns."""
@@ -363,10 +589,14 @@ if active_page == "Uncertainty & calibration":
                      "Raw interval width":obj.get("p10_p90_mean_width"),
                      "P50 MAE":obj.get("median_mae"),"P50 WAPE (%)":obj.get("median_wape_pct")})
     compact_table(pd.DataFrame(rows), 180)
-    st.write("Global split-conformal calibration")
-    st.json({"nominal_coverage_pct":cc.get("nominal_coverage_pct"),
-             "validation":cc.get("validation_calibrated_interval"),
-             "evaluation":cc.get("evaluation_calibrated_interval")})
+    render_structured_data(
+        {
+            "Nominal coverage target (%)": cc.get("nominal_coverage_pct"),
+            "Validation calibrated interval": cc.get("validation_calibrated_interval"),
+            "Evaluation calibrated interval": cc.get("evaluation_calibrated_interval"),
+        },
+        "Global split-conformal calibration",
+    )
 
     conditional = quant.get("conditional_conformal_calibration", {})
     if conditional:
@@ -408,14 +638,17 @@ if active_page == "Uncertainty & calibration":
                     else float("nan")
                 )
                 metric("16+ hour interval-width change", f"{width_change * 100:+.1f}%" if pd.notna(width_change) else "N/A")
-        st.json({
-            "method": conditional.get("method"),
-            "context_feature": conditional.get("context_feature"),
-            "validation_interval": conditional.get("validation_interval"),
-            "evaluation_interval": conditional.get("evaluation_interval"),
-            "evaluation_metrics": conditional.get("evaluation_metrics"),
-            "validation_group_adjustments": conditional.get("validation_group_adjustments"),
-        })
+        render_structured_data(
+            {
+                "Method": conditional.get("method"),
+                "Context feature": conditional.get("context_feature"),
+                "Validation interval": conditional.get("validation_interval"),
+                "Evaluation interval": conditional.get("evaluation_interval"),
+                "Evaluation metrics": conditional.get("evaluation_metrics"),
+                "Validation group adjustments": conditional.get("validation_group_adjustments"),
+            },
+            "Conditional calibration details",
+        )
         st.warning(
             "This is a candidate calibration. Higher coverage is not automatically better if interval width grows excessively. "
             "Compare coverage and width together, including the 16+ hour group, before promoting."
@@ -707,11 +940,14 @@ if active_page == "Dataset explorer":
                         "does not imply a higher or lower business value."
                     )
                 elif feature_info["kind"] == "date":
-                    st.write({
-                        "First date": profile.get("min"),
-                        "Last date": profile.get("max"),
-                        "Distinct dates": profile.get("distinct_count"),
-                    })
+                    render_structured_data(
+                        {
+                            "First date": profile.get("min"),
+                            "Last date": profile.get("max"),
+                            "Distinct dates": profile.get("distinct_count"),
+                        },
+                        "Date coverage",
+                    )
                 elif feature_info["kind"] == "vector":
                     st.markdown("**24-hour sequence diagnostics**")
                     v1, v2, v3 = st.columns(3)
@@ -1021,7 +1257,7 @@ if active_page == "Experiment lab":
 
 if active_page == "Wavelet benchmark":
     from wavelet_tab import render_wavelet_tab
-    render_wavelet_tab(API, get_json, metric, compact_table)
+    render_wavelet_tab(API, get_json, metric, compact_table, render_structured_data)
 
 
 

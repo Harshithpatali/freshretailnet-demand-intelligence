@@ -218,3 +218,37 @@ def test_stakeholder_evidence_uses_only_aggregate_json_artifacts(monkeypatch):
     assert evidence["inventory_optimizer"]["scenario_results"][0]["empirical_fill_rate"] == 0.8
     assert len(sources) == 2
     assert missing == []
+
+
+
+def test_nested_dashboard_payloads_are_flattened_without_json_dumps():
+    dashboard_path = ROOT / "dashboard"
+    if str(dashboard_path) not in sys.path:
+        sys.path.insert(0, str(dashboard_path))
+    from presentation import flatten_structured_data
+
+    payload = {
+        "nominal_coverage_pct": 80.0,
+        "validation": {"coverage_pct": 79.5, "interval_width": 1.25},
+        "group_adjustments": [{"bucket": "low exposure", "adjustment": 0.2}],
+        "limitations": ["short validation window", "observed-sales proxy"],
+    }
+    frame = flatten_structured_data(payload)
+    values = dict(zip(frame["Field"], frame["Value"]))
+
+    assert values["nominal_coverage_pct"] == "80"
+    assert values["validation / coverage_pct"] == "79.5"
+    assert values["group_adjustments 1 / bucket"] == "low exposure"
+    assert values["limitations"] == "short validation window · observed-sales proxy"
+    assert not any(value.startswith("{") or value.startswith("[") for value in frame["Value"])
+
+
+def test_dashboard_source_does_not_render_raw_json_widgets():
+    dashboard_files = [
+        ROOT / "dashboard" / "app.py",
+        ROOT / "dashboard" / "wavelet_tab.py",
+    ]
+    for path in dashboard_files:
+        source = path.read_text(encoding="utf-8")
+        assert "st.json(" not in source
+        assert "st.write({" not in source
