@@ -116,6 +116,26 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def select_deterministic_series_sample(
+    pairs: pd.DataFrame,
+    sample_size: int = SERIES_SAMPLE,
+) -> pd.DataFrame:
+    """Sample the same IDs regardless of the upstream distinct-row ordering."""
+    stable_pairs = (
+        pairs[GROUP]
+        .drop_duplicates()
+        .sort_values(GROUP, kind="mergesort")
+        .reset_index(drop=True)
+    )
+    if len(stable_pairs) < sample_size:
+        raise RuntimeError(f"Need {sample_size} distinct series; found {len(stable_pairs)}")
+    return (
+        stable_pairs.sample(n=sample_size, random_state=SEED)
+        .sort_values(GROUP, kind="mergesort")
+        .reset_index(drop=True)
+    )
+
+
 def load_deterministic_panel(s3, bucket: str, root: Path):
     source_paths = {}
     for split, key in RAW.items():
@@ -126,9 +146,7 @@ def load_deterministic_panel(s3, bucket: str, root: Path):
 
     train_lazy = pl.scan_parquet(source_paths["train"])
     pairs = train_lazy.select(GROUP).unique().collect(engine="streaming").to_pandas()
-    if len(pairs) < SERIES_SAMPLE:
-        raise RuntimeError(f"Need {SERIES_SAMPLE} distinct series; found {len(pairs)}")
-    sampled = pairs.sample(n=SERIES_SAMPLE, random_state=SEED).sort_values(GROUP).reset_index(drop=True)
+    sampled = select_deterministic_series_sample(pairs, SERIES_SAMPLE)
     sampled_keys = pl.from_pandas(sampled)
 
     frames = {}
