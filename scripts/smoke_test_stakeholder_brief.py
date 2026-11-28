@@ -11,7 +11,31 @@ from fastapi import HTTPException
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from api.main import StakeholderBriefRequest, generate_stakeholder_brief
+from botocore.exceptions import ClientError
+
+from api.main import StakeholderBriefRequest, _client, generate_stakeholder_brief
+
+
+def diagnose_r2_objects() -> None:
+    client = _client()
+    bucket = os.environ["R2_BUCKET"]
+    client.head_bucket(Bucket=bucket)
+    print("R2_BUCKET_ACCESS=success")
+    for key in (
+        "inventory-optimizer-artifacts/inventory_optimizer_summary.json",
+        "forecast-research-artifacts/forecast_research_summary.json",
+    ):
+        try:
+            response = client.head_object(Bucket=bucket, Key=key)
+            print(f"R2_OBJECT_FOUND={key} SIZE={response.get('ContentLength')}")
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            metadata = exc.response.get("ResponseMetadata", {})
+            print(
+                f"R2_OBJECT_ERROR={key} CODE={error.get('Code')} "
+                f"HTTP={metadata.get('HTTPStatusCode')}"
+            )
+            raise
 
 
 def main() -> None:
@@ -20,6 +44,7 @@ def main() -> None:
         "STAKEHOLDER_FOCUS",
         "Explain the inventory service gap, forecast model comparisons, uncertainty experiments and next decisions.",
     )
+    diagnose_r2_objects()
     result = generate_stakeholder_brief(
         StakeholderBriefRequest(audience=audience, focus=focus)
     )
