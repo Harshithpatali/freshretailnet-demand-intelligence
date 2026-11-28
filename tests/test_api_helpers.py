@@ -299,10 +299,10 @@ def test_stakeholder_evidence_is_compacted_before_sending_to_groq(monkeypatch):
     raw, sources, missing = api._stakeholder_evidence()
     compact = api._compact_stakeholder_evidence(raw)
 
-    assert compact["inventory_optimizer"]["scenario_results"][0]["empirical_fill_rate"] == 0.8
-    assert "feature_gain_dump" not in compact["inventory_optimizer"]["scenario_results"][0]
-    assert "feature_gain" not in compact["forecast_research"]["rolling_design"]["folds"][0]
-    assert compact["forecast_research"]["series_sample_size_complete"] == 3000
+    assert compact["inventory"]["scenarios"][0]["empirical_fill_rate"] == 0.8
+    assert "feature_gain_dump" not in compact["inventory"]["scenarios"][0]
+    assert "rolling_design" not in compact["forecast"]
+    assert compact["forecast"]["complete_series_sample"] == 3000
     assert sources == ["inventory.json", "forecast.json"]
     assert missing == []
 
@@ -400,12 +400,12 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
     compact = api._compact_stakeholder_evidence(raw)
     encoded = __import__("json").dumps(compact, separators=(",", ":"))
 
-    assert len(compact["inventory_optimizer"]["balanced_scenario_segments"]) == 6
-    assert len(compact["inventory_optimizer"]["distribution_comparison"]["overall_scores"]) == 3
+    assert len(compact["inventory"]["balanced_scenario_segments"]) == 6
+    assert len(compact["inventory"]["distribution_comparison"]["overall_scores"]) == 3
     assert "debug" not in encoded
     assert "feature_gain" not in encoded
     assert "raw_store_rows" not in encoded
-    assert len(encoded) < 7000
+    assert len(encoded) < 4500
 
 
 def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
@@ -422,3 +422,5 @@ def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
         api.generate_stakeholder_brief(request)
     assert exc.value.status_code == 413
     assert exc.value.detail["code"] == "stakeholder_prompt_too_large"
+    assert exc.value.detail["prompt_characters"] > exc.value.detail["maximum_prompt_characters"]
+    assert "safe limit" in exc.value.detail["message"]

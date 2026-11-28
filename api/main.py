@@ -133,7 +133,7 @@ def _compact_bootstrap(payload: Any) -> dict[str, Any]:
 
 
 def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
-    """Create a deliberately small executive evidence pack (no fold or feature dumps)."""
+    """Build a small executive evidence pack; never forward verbose research reports."""
     inventory = raw.get("inventory_optimizer") or {}
     if not isinstance(inventory, Mapping):
         inventory = {}
@@ -142,79 +142,76 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
         inventory.get("scenario_results", []),
         (
             "scenario", "target_fill_rate", "empirical_fill_rate",
-            "empirical_cycle_service_level", "service_target_met_empirically",
             "theoretical_expected_fill_rate", "total_simulated_cost",
-            "actual_protection_demand", "fulfilled_protection_demand",
-            "unfulfilled_protection_demand", "leftover_stock",
-            "capacity_limited_store_count", "service_target_met_store_count",
-            "store_count", "mean_storage_utilization_pct",
+            "capacity_limited_store_count", "store_count",
             "mean_replenishment_utilization_pct",
         ),
         limit=3,
     )
 
-    distribution_payload = inventory.get("distribution_diagnostics", {})
-    distribution_rows = (
-        distribution_payload.get("results", [])
-        if isinstance(distribution_payload, Mapping) else []
-    )
-    overall_distribution = [
-        row for row in distribution_rows
-        if isinstance(row, Mapping) and row.get("segment_type") == "overall"
-    ]
-    distribution = {
-        "reference": (
-            distribution_payload.get("reference_optimizer_distribution")
-            if isinstance(distribution_payload, Mapping) else None
-        ),
-        "challengers": (
-            distribution_payload.get("challengers", [])
-            if isinstance(distribution_payload, Mapping) else []
-        ),
-        "overall_scores": _compact_rows(
-            overall_distribution,
-            ("distribution", "median_mae", "pinball_q10", "pinball_q50",
-             "pinball_q90", "central_80_coverage_pct",
-             "central_80_mean_width", "median_bias_pct"),
-            limit=3,
-        ),
-        "limitation": (
-            distribution_payload.get("limitations")
-            if isinstance(distribution_payload, Mapping) else None
-        ),
-    }
+    capacity_rows = []
+    for item in inventory.get("capacity_diagnostics", [])[:3]:
+        if not isinstance(item, Mapping):
+            continue
+        utilization = item.get("replenishment_utilization_pct", {})
+        if not isinstance(utilization, Mapping):
+            utilization = {}
+        capacity_rows.append({
+            "scenario": item.get("scenario"),
+            "replenishment_p50_pct": utilization.get("p50"),
+            "replenishment_p95_pct": utilization.get("p95"),
+            "stores_at_95pct_or_more": utilization.get("share_at_least_95_pct"),
+            "stores_at_99pct_or_more": utilization.get("share_at_least_99_pct"),
+        })
 
     segment_rows = [
         row for row in inventory.get("segment_results", [])
         if isinstance(row, Mapping) and row.get("scenario") == "balanced_90pct"
     ] if isinstance(inventory.get("segment_results", []), list) else []
+    segments = _compact_rows(
+        segment_rows,
+        ("segment_type", "segment", "empirical_fill_rate", "shortage_units"),
+        limit=6,
+    )
+
+    distribution_payload = inventory.get("distribution_diagnostics", {})
+    distribution_results = (
+        distribution_payload.get("results", [])
+        if isinstance(distribution_payload, Mapping) else []
+    )
+    overall_distributions = [
+        row for row in distribution_results
+        if isinstance(row, Mapping) and row.get("segment_type") == "overall"
+    ]
+    distributions = _compact_rows(
+        overall_distributions,
+        ("distribution", "median_mae", "central_80_coverage_pct",
+         "central_80_mean_width"),
+        limit=3,
+    )
+
+    population = inventory.get("evaluation_population", {})
+    calibration = inventory.get("calibration_design", {})
     compact_inventory = {
-        "evaluation_population": _pick_fields(
-            inventory.get("evaluation_population", {}),
+        "population": _pick_fields(
+            population,
             ("target_date_start", "target_date_end", "target_dates",
-             "complete_continuous_series", "total_series_with_any_prediction"),
+             "complete_continuous_series"),
         ),
-        "calibration": _pick_fields(
-            inventory.get("calibration_design", {}),
-            ("windows_per_series", "bias_estimator", "scale_estimator", "prior_strength"),
+        "calibration_windows_per_series": (
+            calibration.get("windows_per_series")
+            if isinstance(calibration, Mapping) else None
         ),
-        "evaluation_windows_per_series": (
-            inventory.get("evaluation_design", {}).get("windows_per_series")
-            if isinstance(inventory.get("evaluation_design"), Mapping) else None
-        ),
-        "scenario_results": scenarios,
-        "capacity_stress": _compact_capacity(inventory.get("capacity_diagnostics", [])),
-        "balanced_scenario_segments": _compact_rows(
-            segment_rows,
-            ("segment_type", "segment", "stores", "series", "empirical_fill_rate",
-             "shortage_units", "leftover_units", "simulated_cost"),
-            limit=6,
-        ),
-        "distribution_comparison": distribution,
-        "limitations": (
-            inventory.get("limitations", [])[:5]
-            if isinstance(inventory.get("limitations"), list) else []
-        ),
+        "scenarios": scenarios,
+        "capacity_stress": capacity_rows,
+        "balanced_scenario_segments": segments,
+        "distribution_comparison": {
+            "reference_distribution": (
+                distribution_payload.get("reference_optimizer_distribution")
+                if isinstance(distribution_payload, Mapping) else None
+            ),
+            "overall_scores": distributions,
+        },
     }
 
     forecast = raw.get("forecast_research") or {}
@@ -227,60 +224,74 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(final, Mapping):
         final = {}
 
-    pooled = _compact_rows(
+    pooled_metrics = _compact_rows(
         rolling.get("pooled_test_metrics", []),
         ("model", "mae", "rmse", "wape_pct", "bias_pct"),
-        limit=7,
+        limit=6,
     )
     final_metrics = _compact_rows(
         final.get("metrics", []),
         ("model", "mae", "rmse", "wape_pct", "bias_pct"),
-        limit=7,
+        limit=6,
     )
+    weights = final.get("ensemble_weights", {})
+    if not isinstance(weights, Mapping):
+        weights = {}
+    weights = dict(list(weights.items())[:6])
+
+    bootstrap = final.get("bootstrap_vs_baseline", {})
+    bootstrap_rows = {}
+    if isinstance(bootstrap, Mapping):
+        comparisons = bootstrap.get("comparisons_vs_baseline", {})
+        if isinstance(comparisons, Mapping):
+            # Residual correction is the primary decision-relevant challenger.
+            residual = comparisons.get("residual_corrected", {})
+            if isinstance(residual, Mapping):
+                mae = residual.get("mae", {})
+                if isinstance(mae, Mapping):
+                    bootstrap_rows["residual_corrected_mae"] = _pick_fields(
+                        mae,
+                        ("mean_improvement_pct", "ci_95_low_pct",
+                         "ci_95_high_pct", "ci_excludes_zero"),
+                    )
+
     wavelet = final.get("wavelet_ablation_vs_spectral", {})
-    wavelet_comparison = (
-        wavelet.get("comparisons_vs_baseline", {})
-        if isinstance(wavelet, Mapping) else {}
-    )
-    wavelet_metrics = {}
-    if isinstance(wavelet_comparison, Mapping):
-        candidate = wavelet_comparison.get("wavelet", {})
+    wavelet_rows = {}
+    if isinstance(wavelet, Mapping):
+        comparisons = wavelet.get("comparisons_vs_baseline", {})
+        candidate = comparisons.get("wavelet", {}) if isinstance(comparisons, Mapping) else {}
         if isinstance(candidate, Mapping):
             for metric_name in ("mae", "rmse", "wape"):
-                if isinstance(candidate.get(metric_name), Mapping):
-                    wavelet_metrics[metric_name] = _pick_fields(
-                        candidate[metric_name],
+                value = candidate.get(metric_name)
+                if isinstance(value, Mapping):
+                    wavelet_rows[metric_name] = _pick_fields(
+                        value,
                         ("mean_improvement_pct", "ci_95_low_pct",
-                         "ci_95_high_pct", "probability_improvement",
-                         "ci_excludes_zero"),
+                         "ci_95_high_pct", "ci_excludes_zero"),
                     )
 
     compact_forecast = {
         "complete_series_sample": forecast.get("series_sample_size_complete"),
-        "rolling_pooled_metrics": pooled,
+        "rolling_pooled_metrics": pooled_metrics,
         "final_evaluation_period": final.get("evaluation_period"),
-        "final_evaluation_rows": final.get("evaluation_rows"),
         "final_metrics": final_metrics,
-        "ensemble_weights": final.get("ensemble_weights", {}),
+        "ensemble_weights": weights,
         "ensemble_diversity": _pick_fields(
             final.get("ensemble_diversity", {}),
             ("effective_model_count", "positive_weight_model_count",
              "maximum_model_weight"),
         ),
         "ensemble_weight_cap": final.get("ensemble_weight_cap"),
-        "bootstrap_vs_baseline": _compact_bootstrap(
-            final.get("bootstrap_vs_baseline", {})
-        ),
-        "wavelet_ablation_vs_spectral": wavelet_metrics,
-        "promotion_status": final.get("status"),
-        "limitations": (
-            forecast.get("limitations", [])[:5]
-            if isinstance(forecast.get("limitations"), list) else []
+        "residual_correction_bootstrap_mae": bootstrap_rows,
+        "wavelet_ablation_vs_spectral": wavelet_rows,
+        "promotion_status": (
+            str(final.get("status", ""))[:180] if final.get("status") is not None else None
         ),
     }
+
     return {
-        "inventory_optimizer": compact_inventory,
-        "forecast_research": compact_forecast,
+        "inventory": compact_inventory,
+        "forecast": compact_forecast,
     }
 
 def _groq_http_exception(exc: Exception, model: str) -> HTTPException:
@@ -837,15 +848,23 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         user_message = json.dumps(prompt, ensure_ascii=False, default=str, separators=(",", ":"))
         system_message = _stakeholder_system_prompt()
         prompt_characters = len(system_message) + len(user_message)
-        max_prompt_characters = 10_000
+        max_prompt_characters = 7_000
         if prompt_characters > max_prompt_characters:
             raise HTTPException(
                 status_code=413,
                 detail={
                     "code": "stakeholder_prompt_too_large",
+                    "message": (
+                        f"The compact stakeholder prompt is {prompt_characters:,} characters; "
+                        f"the safe limit is {max_prompt_characters:,}."
+                    ),
                     "prompt_characters": prompt_characters,
                     "maximum_prompt_characters": max_prompt_characters,
-                    "action": "The summarized stakeholder evidence is still too large. Reduce the evidence selection before calling Groq.",
+                    "estimated_input_tokens_upper_bound": int(math.ceil(prompt_characters / 2.5)),
+                    "action": (
+                        "The request was stopped before Groq to protect the 8,000 TPM allowance. "
+                        "The evidence pack has been reduced; inspect the prompt-size diagnostics if this recurs."
+                    ),
                 },
             )
         request_options = {}
