@@ -162,3 +162,29 @@ def test_dataset_eda_endpoint_returns_published_report(monkeypatch):
     expected = {"dataset": "FreshRetailNet-50K", "feature_count": 19}
     monkeypatch.setattr(api, "_safe_json", lambda key: expected if key == "dataset-eda/full_dataset_eda.json" else {})
     assert api.dataset_eda() == expected
+
+
+def test_inventory_optimizer_summary_api_reads_published_report(monkeypatch):
+    expected = {"scenario_results": [{"scenario": "balanced_90pct"}]}
+    monkeypatch.setattr(api, "_safe_json", lambda key: expected if key == "inventory-optimizer-artifacts/inventory_optimizer_summary.json" else {})
+    assert api.inventory_optimizer_summary() == expected
+
+
+def test_inventory_optimizer_store_endpoint_filters_scenario(monkeypatch):
+    frame = pd.DataFrame({
+        "store_id": ["s1", "s2", "s1"],
+        "scenario": ["balanced_90pct", "balanced_90pct", "tight_95pct"],
+        "target_fill_rate": [0.9, 0.9, 0.95],
+        "achieved_fill_rate": [0.91, 0.88, 0.94],
+        "service_target_met": [True, False, False],
+    })
+    monkeypatch.setattr(api, "_safe_csv", lambda _key: frame)
+    result = api.inventory_optimizer_stores(scenario="balanced_90pct", limit=10)
+    assert result["total"] == 2
+    assert {row["store_id"] for row in result["rows"]} == {"s1", "s2"}
+
+
+def test_forecast_research_summary_api_reads_published_report(monkeypatch):
+    expected = {"final_research_comparison": {"ensemble_weights": {"baseline": 1.0}}}
+    monkeypatch.setattr(api, "_safe_json", lambda key: expected if key == "forecast-research-artifacts/forecast_research_summary.json" else {})
+    assert api.forecast_research_summary() == expected
