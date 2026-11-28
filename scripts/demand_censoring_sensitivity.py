@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,11 @@ import boto3
 import numpy as np
 import pandas as pd
 from botocore.config import Config
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.artifact_provenance import build_provenance, upload_versioned_artifact
 
 
 def apply_sensitivity(daily: pd.DataFrame, low_multiplier: float = 0.5,
@@ -74,7 +80,7 @@ def main():
         s3.download_file(bucket, "raw/eval.parquet", str(eval_path))
         train = pl.read_parquet(train_path)
         evaluation = pl.read_parquet(eval_path)
-        required = {"store_id", "product_id", "dt", "sale_amount", "hours_sale", "hours_stock_status"}
+        required = {"store_id", "product_id", "dt", "sale_amount", "hours_sale", "hours_stock_status", "stock_hour6_22_cnt"}
         for label, frame in (("train", train), ("eval", evaluation)):
             missing = required - set(frame.columns)
             if missing:
@@ -84,7 +90,7 @@ def main():
             return (
                 frame.select(
                     "store_id", "product_id", "dt", "sale_amount",
-                    "hours_sale", "hours_stock_status",
+                    "hours_sale", "hours_stock_status", "stock_hour6_22_cnt",
                 )
                 .with_columns(
                     pl.int_ranges(0, pl.col("hours_sale").list.len()).alias("hour_of_day")
