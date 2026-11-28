@@ -49,6 +49,11 @@ if not health.get("r2_configured"):
     st.warning("The API is alive, but R2 credentials are not configured. Artifact-backed panels will show their own availability messages.")
 else:
     try:
+        readiness = get_json("/ready")
+        st.caption(f"API readiness: {readiness.get('status', 'unknown')} · R2 reachable")
+    except Exception as exc:
+        st.warning(f"The API is alive but its R2 bucket is not ready: {exc}. Available dashboard sections may be limited.")
+    try:
         overview = get_json("/api/v1/overview")
     except Exception as exc:
         st.warning(f"The API is reachable, but the overview could not be loaded. Individual panels may still work: {exc}")
