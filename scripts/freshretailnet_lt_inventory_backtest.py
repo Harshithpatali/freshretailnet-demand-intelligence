@@ -59,7 +59,7 @@ def r2_client():
     )
 
 
-def select_continuous_h1_predictions(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+def select_continuous_h1_predictions(frame: pd.DataFrame, min_complete_series: int = 1000) -> tuple[pd.DataFrame, dict]:
     required = GROUP + [
         "horizon_days", "fold", "target_date", "actual", "baseline_prediction",
         "selected_prediction", "calibrated_prediction",
@@ -83,10 +83,10 @@ def select_continuous_h1_predictions(frame: pd.DataFrame) -> tuple[pd.DataFrame,
     data = data.loc[complete_keys.isin(complete)].copy()
     complete_series = int(data[GROUP].drop_duplicates().shape[0])
     total_series = int(counts.shape[0])
-    if complete_series < 1000:
+    if complete_series < min_complete_series:
         raise RuntimeError(
             f"Only {complete_series:,}/{total_series:,} series have a complete {n_dates}-day window; "
-            "at least 1,000 are required"
+            f"at least {min_complete_series:,} are required"
         )
     data = data.rename(columns={
         "target_date": "date",
