@@ -479,9 +479,20 @@ def residual_correction(
 
 
 def select_ensemble_weights(
-    actual: np.ndarray, candidates: dict[str, np.ndarray]
+    actual: np.ndarray,
+    candidates: dict[str, np.ndarray],
+    max_weight: float = 0.65,
 ) -> dict[str, float]:
+    """Select validation weights with a cap that prevents single-model collapse."""
+    if not 0.5 <= max_weight <= 1.0:
+        raise ValueError("max_weight must be between 0.5 and 1.0")
     names = list(candidates)
+    if not names:
+        raise ValueError("At least one ensemble candidate is required")
+    if len(names) == 1:
+        return {names[0]: 1.0}
+    if max_weight * len(names) < 1.0 - 1e-12:
+        raise ValueError("max_weight is too small for the number of candidates")
     matrix = np.column_stack([candidates[name] for name in names])
     n_models = len(names)
     start = np.full(n_models, 1.0 / n_models)
@@ -494,7 +505,7 @@ def select_ensemble_weights(
         objective,
         start,
         method="SLSQP",
-        bounds=[(0.0, 1.0)] * n_models,
+        bounds=[(0.0, max_weight)] * n_models,
         constraints=[{"type": "eq", "fun": lambda weights: np.sum(weights) - 1.0}],
         options={"maxiter": 500, "ftol": 1e-10},
     )
@@ -502,6 +513,16 @@ def select_ensemble_weights(
     weights = np.maximum(weights, 0.0)
     weights /= max(float(weights.sum()), 1e-12)
     return {name: float(weight) for name, weight in zip(names, weights)}
+
+
+def ensemble_diversity(weights: dict[str, float]) -> dict[str, float]:
+    values = np.asarray(list(weights.values()), dtype=float)
+    return {
+        "effective_model_count": float(1.0 / max(np.square(values).sum(), 1e-12)),
+        "positive_weight_model_count": int(np.sum(values > 1e-6)),
+        "maximum_model_weight": float(values.max()) if len(values) else 0.0,
+        "weight_entropy": float(-np.sum(values[values > 0] * np.log(values[values > 0]))),
+    }
 
 
 def two_way_bootstrap(
@@ -679,6 +700,8 @@ def run_fold(
         "best_iterations": iteration_counts,
         "residual_correction_best_iteration": residual_iterations,
         "ensemble_weights_selected_on_validation_tail": weights,
+        "ensemble_diversity": ensemble_diversity(weights),
+        "ensemble_weight_cap": 0.65,
         "validation_selection_metrics": validation_metrics,
         "test_metrics": test_metrics,
         "wavelet_ablation": {
@@ -816,6 +839,8 @@ def main():
                 "evaluation_rows": int(len(final_predictions)),
                 "metrics": final_metrics,
                 "ensemble_weights": final_weights,
+                "ensemble_diversity": ensemble_diversity(final_weights),
+                "ensemble_weight_cap": 0.65,
                 "bootstrap_vs_baseline": bootstrap,
                 "wavelet_ablation_vs_spectral": wavelet_ablation_bootstrap,
                 "status": "research comparison on the repository's previously used seven-day holdout; not an untouched production promotion test",
@@ -826,7 +851,7 @@ def main():
                 "spectral": "periodogram diagnostics on pre-origin history: dominant 2-28-day period, 6-8-day energy share, normalized entropy and peak share",
                 "wavelet": "db2 discrete wavelet decomposition on trailing 32 observed sales strictly before each target date; six energy/entropy/ratio/smoothed-mean features",
                 "residual_model": "LightGBM residual correction trained on the first half of validation residuals, checked on the second half, then refit on all validation residuals for test scoring",
-                "ensemble": "non-negative simplex weights minimizing validation-tail squared error; weights frozen for test dates",
+                "ensemble": "non-negative validation-tail weights capped at 0.65 per model to avoid single-model collapse; weights frozen for test dates",
             },
             "feature_availability": {
                 "excluded_target_day_fields": [

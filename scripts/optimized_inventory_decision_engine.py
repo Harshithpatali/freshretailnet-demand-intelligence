@@ -107,11 +107,21 @@ def build_non_overlapping_windows(
     return pd.DataFrame(rows)
 
 
+def _robust_scale(values: np.ndarray) -> float:
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if len(values) < 2:
+        return float(np.std(values)) if len(values) else 0.0
+    median = float(np.median(values))
+    mad_scale = 1.4826 * float(np.median(np.abs(values - median)))
+    return mad_scale if mad_scale > 1e-9 else float(np.std(values, ddof=1))
+
+
 def build_demand_distribution(
     calibration_windows: pd.DataFrame,
     prior_strength: float = 3.0,
 ) -> pd.DataFrame:
-    """Estimate protection demand and shrink noisy SKU residual scales."""
+    """Calibrate seven-day residual bias and scale with demand-tier partial pooling."""
     if calibration_windows.empty:
         raise RuntimeError("No calibration windows were generated")
     rows = []
@@ -120,32 +130,280 @@ def build_demand_distribution(
             group["actual_protection_demand"].to_numpy(float)
             - group["forecast_protection_demand"].to_numpy(float)
         )
-        forecast_mean = float(group["forecast_protection_demand"].mean())
-        bias = float(np.mean(errors))
-        demand_mean = max(0.0, forecast_mean + bias)
-        raw_std = float(np.std(errors, ddof=1)) if len(errors) > 1 else 0.0
         rows.append({
             "store_id": str(key[0]),
             "product_id": str(key[1]),
-            "forecast_mean_7d": forecast_mean,
-            "forecast_error_bias_7d": bias,
-            "demand_mean": demand_mean,
-            "raw_residual_std": raw_std,
+            "forecast_mean_7d": float(group["forecast_protection_demand"].mean()),
+            "forecast_error_mean_7d": float(np.mean(errors)),
+            "forecast_error_median_7d": float(np.median(errors)),
+            "raw_residual_std": float(np.std(errors, ddof=1)) if len(errors) > 1 else 0.0,
+            "robust_residual_scale": _robust_scale(errors),
             "calibration_windows": int(len(group)),
+            "calibration_errors_json": json.dumps(errors.tolist()),
         })
     result = pd.DataFrame(rows)
-    global_std = float(result["raw_residual_std"].median())
-    n = result["calibration_windows"].astype(float)
-    # Empirical-Bayes variance shrinkage toward the cohort median; the five
-    # calibration windows per SKU are too few for an unshrunk tail estimate.
-    numerator = (n - 1.0) * np.square(result["raw_residual_std"]) + prior_strength * global_std**2
-    denominator = np.maximum(n - 1.0 + prior_strength, 1.0)
-    result["demand_std"] = np.sqrt(np.maximum(numerator / denominator, 0.0))
-    result["demand_std"] = np.maximum(result["demand_std"], 0.05 * result["demand_mean"])
+    if result.empty:
+        raise RuntimeError("No per-series seven-day calibration statistics were created")
+
+    rank = result["forecast_mean_7d"].rank(method="first", pct=True)
+    result["demand_segment"] = np.select(
+        [rank <= 1.0 / 3.0, rank <= 2.0 / 3.0],
+        ["low", "medium"],
+        default="high",
+    )
+    tier_bias, tier_scale, tier_errors = {}, {}, {}
+    for segment, group in result.groupby("demand_segment", observed=True):
+        errors = np.concatenate([
+            np.asarray(json.loads(value), dtype=float)
+            for value in group["calibration_errors_json"]
+        ])
+        tier_errors[str(segment)] = errors
+        tier_bias[str(segment)] = float(np.median(errors))
+        tier_scale[str(segment)] = max(
+            float(group["robust_residual_scale"].median()), 1e-8
+        )
+
+    corrected_means, shrunk_scales, sample_payloads, conformal_adjustments = [], [], [], []
+    for row in result.itertuples(index=False):
+        errors = np.asarray(json.loads(row.calibration_errors_json), dtype=float)
+        n = max(1, int(row.calibration_windows))
+        prior_weight = prior_strength / (n + prior_strength)
+        own_weight = 1.0 - prior_weight
+        bias = (
+            own_weight * float(row.forecast_error_median_7d)
+            + prior_weight * tier_bias[str(row.demand_segment)]
+        )
+        segment_scale = tier_scale[str(row.demand_segment)]
+        numerator = (
+            max(n - 1, 0) * float(row.robust_residual_scale) ** 2
+            + prior_strength * segment_scale**2
+        )
+        denominator = max(n - 1 + prior_strength, 1.0)
+        scale = float(np.sqrt(max(numerator / denominator, 0.0)))
+        mean = max(0.0, float(row.forecast_mean_7d) + bias)
+        samples = np.maximum(
+            0.0,
+            float(row.forecast_mean_7d) + errors - float(np.mean(errors)) + bias,
+        )
+        pooled = tier_errors[str(row.demand_segment)] - bias
+        conformal = max(0.0, float(np.quantile(pooled, 0.90, method="higher")))
+        corrected_means.append(mean)
+        shrunk_scales.append(max(scale, 0.05 * mean))
+        sample_payloads.append(json.dumps(samples.tolist()))
+        conformal_adjustments.append(conformal)
+
+    result["shrunk_residual_bias_7d"] = [
+        corrected - forecast
+        for corrected, forecast in zip(corrected_means, result["forecast_mean_7d"])
+    ]
+    result["demand_mean"] = corrected_means
+    result["demand_std"] = shrunk_scales
+    result["empirical_demand_samples_json"] = sample_payloads
+    result["conformal_upper_adjustment_7d"] = conformal_adjustments
     result["inventory_position"] = 0.0
     result["volume_per_unit"] = 1.0
     return result
 
+
+def attach_inventory_segments(demand_inputs: pd.DataFrame) -> pd.DataFrame:
+    """Add low/medium/high store-size tiers using calibrated protection demand."""
+    result = demand_inputs.copy()
+    store_daily = (
+        result.groupby("store_id", observed=True)["demand_mean"].sum()
+        .div(PROTECTION_DAYS)
+    )
+    rank = store_daily.rank(method="first", pct=True)
+    store_segment = pd.Series(
+        np.select(
+            [rank <= 1.0 / 3.0, rank <= 2.0 / 3.0],
+            ["small", "medium"],
+            default="large",
+        ),
+        index=store_daily.index,
+    )
+    result["store_daily_demand"] = result["store_id"].map(store_daily).astype(float)
+    result["store_size_segment"] = result["store_id"].map(store_segment).astype(str)
+    return result
+
+
+def _pinball_loss(actual: np.ndarray, predicted: np.ndarray, quantile: float) -> float:
+    error = np.asarray(actual, dtype=float) - np.asarray(predicted, dtype=float)
+    return float(np.mean(np.maximum(quantile * error, (quantile - 1.0) * error)))
+
+
+def score_distribution_candidates(
+    evaluation_windows: pd.DataFrame,
+    demand_inputs: pd.DataFrame,
+) -> pd.DataFrame:
+    """Compare lognormal, empirical-bootstrap and conformal intervals on later blocks."""
+    from scipy.stats import lognorm
+
+    joined = evaluation_windows.merge(
+        demand_inputs[
+            GROUP + [
+                "forecast_mean_7d", "demand_mean", "demand_std", "demand_segment",
+                "calibration_errors_json", "empirical_demand_samples_json",
+                "shrunk_residual_bias_7d",
+            ]
+        ],
+        on=GROUP,
+        how="inner",
+        validate="many_to_one",
+    )
+    if joined.empty:
+        raise RuntimeError("No evaluation rows align with the calibrated demand distributions")
+
+    conformal_by_segment = {}
+    for segment, group in demand_inputs.groupby("demand_segment", observed=True):
+        scores = []
+        for row in group.itertuples(index=False):
+            errors = np.asarray(json.loads(row.calibration_errors_json), dtype=float)
+            scores.extend(np.abs(errors - float(row.shrunk_residual_bias_7d)).tolist())
+        conformal_by_segment[str(segment)] = (
+            float(np.quantile(scores, 0.80, method="higher")) if scores else 0.0
+        )
+
+    records = []
+    for row in joined.itertuples(index=False):
+        mean = max(float(row.demand_mean), 0.0)
+        std = max(float(row.demand_std), 0.0)
+        if mean <= 1e-12 or std <= 1e-12:
+            log_quantiles = np.repeat(mean, 3)
+        else:
+            sigma2 = np.log1p((std / mean) ** 2)
+            sigma = float(np.sqrt(sigma2))
+            mu = float(np.log(mean) - 0.5 * sigma2)
+            log_quantiles = lognorm.ppf(
+                [0.10, 0.50, 0.90], s=sigma, scale=np.exp(mu)
+            )
+        empirical_samples = np.asarray(
+            json.loads(row.empirical_demand_samples_json), dtype=float
+        )
+        empirical_quantiles = np.quantile(empirical_samples, [0.10, 0.50, 0.90])
+        conformal_radius = conformal_by_segment[str(row.demand_segment)]
+        conformal_quantiles = np.asarray([
+            max(0.0, mean - conformal_radius), mean, mean + conformal_radius
+        ])
+        for method, quantiles in (
+            ("moment_lognormal", log_quantiles),
+            ("empirical_bootstrap", empirical_quantiles),
+            ("conformal_residual", conformal_quantiles),
+        ):
+            records.append({
+                "distribution": method,
+                "store_id": str(row.store_id),
+                "product_id": str(row.product_id),
+                "demand_segment": str(row.demand_segment),
+                "actual": float(row.actual_protection_demand),
+                "q10": float(quantiles[0]),
+                "q50": float(quantiles[1]),
+                "q90": float(quantiles[2]),
+            })
+
+    scored = pd.DataFrame(records)
+    groups = [("overall", "all", scored)]
+    groups.extend(
+        ("demand_segment", str(segment), frame)
+        for segment, frame in scored.groupby("demand_segment", observed=True)
+    )
+    summaries = []
+    for segment_type, segment, frame in groups:
+        for method, candidate in frame.groupby("distribution", observed=True):
+            actual = candidate["actual"].to_numpy(float)
+            q10 = candidate["q10"].to_numpy(float)
+            q50 = candidate["q50"].to_numpy(float)
+            q90 = candidate["q90"].to_numpy(float)
+            summaries.append({
+                "segment_type": segment_type,
+                "segment": segment,
+                "distribution": str(method),
+                "evaluation_windows": int(len(candidate)),
+                "median_mae": float(np.mean(np.abs(actual - q50))),
+                "pinball_q10": _pinball_loss(actual, q10, 0.10),
+                "pinball_q50": _pinball_loss(actual, q50, 0.50),
+                "pinball_q90": _pinball_loss(actual, q90, 0.90),
+                "central_80_coverage_pct": float(
+                    100.0 * np.mean((actual >= q10) & (actual <= q90))
+                ),
+                "central_80_mean_width": float(np.mean(q90 - q10)),
+                "median_bias_pct": float(
+                    100.0 * np.sum(actual - q50) / max(np.sum(actual), 1e-12)
+                ),
+            })
+    return pd.DataFrame(summaries)
+
+
+def build_segment_results(evaluated: pd.DataFrame, scenario_name: str) -> pd.DataFrame:
+    """Aggregate later-window outcomes by store size and SKU demand tier."""
+    rows = []
+    for column, segment_type in (
+        ("store_size_segment", "store_size"),
+        ("demand_segment", "sku_demand"),
+    ):
+        for segment, group in evaluated.groupby(column, observed=True):
+            demand = float(group["actual_protection_demand"].sum())
+            rows.append({
+                "scenario": scenario_name,
+                "segment_type": segment_type,
+                "segment": str(segment),
+                "stores": int(group["store_id"].nunique()),
+                "series": int(group[GROUP].drop_duplicates().shape[0]),
+                "evaluation_windows": int(len(group)),
+                "actual_demand": demand,
+                "fulfilled_demand": float(group["fulfilled_units"].sum()),
+                "empirical_fill_rate": float(
+                    group["fulfilled_units"].sum() / max(demand, 1e-12)
+                ),
+                "shortage_units": float(group["shortage_units"].sum()),
+                "leftover_units": float(group["leftover_units"].sum()),
+                "simulated_cost": float(group["simulated_cost"].sum()),
+            })
+    return pd.DataFrame(rows)
+
+
+def capacity_stress_summary(stores: pd.DataFrame, scenario_name: str) -> dict:
+    """Quantify how frequently store capacity constraints are near binding."""
+    replenishment = pd.to_numeric(
+        stores["replenishment_utilization_pct"], errors="coerce"
+    ).fillna(0.0)
+    storage = pd.to_numeric(
+        stores["storage_utilization_pct"], errors="coerce"
+    ).fillna(0.0)
+    output = {
+        "scenario": scenario_name,
+        "store_count": int(len(stores)),
+        "replenishment_utilization_pct": {
+            "p50": float(replenishment.quantile(0.50)),
+            "p90": float(replenishment.quantile(0.90)),
+            "p95": float(replenishment.quantile(0.95)),
+            "max": float(replenishment.max()),
+            "share_at_least_90_pct": float(100.0 * (replenishment >= 90.0).mean()),
+            "share_at_least_95_pct": float(100.0 * (replenishment >= 95.0).mean()),
+            "share_at_least_99_pct": float(100.0 * (replenishment >= 99.0).mean()),
+        },
+        "storage_utilization_pct": {
+            "p50": float(storage.quantile(0.50)),
+            "p90": float(storage.quantile(0.90)),
+            "p95": float(storage.quantile(0.95)),
+            "max": float(storage.max()),
+            "share_at_least_95_pct": float(100.0 * (storage >= 95.0).mean()),
+        },
+        "by_store_size": [],
+    }
+    if "store_size_segment" in stores:
+        for segment, group in stores.groupby("store_size_segment", observed=True):
+            util = group["replenishment_utilization_pct"].astype(float)
+            output["by_store_size"].append({
+                "store_size_segment": str(segment),
+                "stores": int(len(group)),
+                "mean_replenishment_utilization_pct": float(util.mean()),
+                "share_replenishment_at_least_95_pct": float(
+                    100.0 * (util >= 95.0).mean()
+                ),
+                "service_target_met_stores": int(group["service_target_met"].astype(bool).sum()),
+                "mean_expected_fill_rate": float(group["achieved_fill_rate"].astype(float).mean()),
+            })
+    return output
 
 def evaluate_decisions(
     decisions: pd.DataFrame,
@@ -154,7 +412,10 @@ def evaluate_decisions(
     target_fill_rate: float,
 ) -> tuple[pd.DataFrame, dict]:
     joined = evaluation_windows.merge(
-        decisions[GROUP + ["order_qty", "stock_position", "expected_cost"]],
+        decisions[GROUP + [
+            "order_qty", "stock_position", "expected_cost",
+            "store_size_segment", "demand_segment",
+        ]],
         on=GROUP,
         how="inner",
         validate="many_to_one",
@@ -227,7 +488,8 @@ def main():
             )
         calibration = build_non_overlapping_windows(continuous, CALIBRATION_STARTS)
         evaluation = build_non_overlapping_windows(continuous, EVALUATION_STARTS)
-        demand_inputs = build_demand_distribution(calibration)
+        demand_inputs = attach_inventory_segments(build_demand_distribution(calibration))
+        distribution_diagnostics = score_distribution_candidates(evaluation, demand_inputs)
         if demand_inputs[GROUP].duplicated().any():
             raise RuntimeError("Demand calibration created duplicate store-product rows")
         print(
@@ -241,6 +503,8 @@ def main():
         scenario_stores = []
         scenario_evaluation = []
         scenario_metrics = []
+        scenario_segment_results = []
+        scenario_capacity_diagnostics = []
         for scenario in SCENARIOS:
             config = {key: value for key, value in scenario.items() if key != "name"}
             print(f"Optimizing scenario {scenario['name']}: {config}", flush=True)
@@ -260,10 +524,20 @@ def main():
             )
             decisions["scenario"] = scenario["name"]
             stores["scenario"] = scenario["name"]
+            store_segment_map = demand_inputs[
+                ["store_id", "store_size_segment", "store_daily_demand"]
+            ].drop_duplicates("store_id")
+            stores = stores.merge(
+                store_segment_map, on="store_id", how="left", validate="one_to_one"
+            )
             evaluated, metrics = evaluate_decisions(
                 decisions, evaluation, scenario["name"], float(scenario["target_fill_rate"])
             )
+            scenario_segment_results.append(build_segment_results(evaluated, scenario["name"]))
+            capacity_diagnostic = capacity_stress_summary(stores, scenario["name"])
+            scenario_capacity_diagnostics.append(capacity_diagnostic)
             metrics.update({
+                "capacity_stress": capacity_diagnostic,
                 "capacity_limited_store_count": int(
                     (stores["status"] == "CAPACITY_LIMITED_SLA_INFEASIBLE").sum()
                 ),
@@ -288,6 +562,8 @@ def main():
         decision_frame = pd.concat(scenario_decisions, ignore_index=True)
         store_frame = pd.concat(scenario_stores, ignore_index=True)
         evaluation_frame = pd.concat(scenario_evaluation, ignore_index=True)
+        segment_frame = pd.concat(scenario_segment_results, ignore_index=True)
+        distribution_frame = distribution_diagnostics.copy()
         configuration = {
             "source_dataset": "Dingdong-Inc/FreshRetailNet-LT",
             "source_population": "external population; keep results separate from FreshRetailNet-50K",
@@ -296,8 +572,9 @@ def main():
             "evaluation_periods": list(EVALUATION_STARTS),
             "protection_days": PROTECTION_DAYS,
             "target_service_definition": "store-wide volume-weighted expected fill rate",
-            "demand_distribution": "moment-matched lognormal from seven-day forecast bias and residual scale",
-            "residual_scale_shrinkage": "empirical-Bayes variance shrinkage toward cohort median; prior strength 3",
+            "demand_distribution": "moment-matched lognormal reference optimizer; empirical-bootstrap and segment-conformal candidates scored separately on later windows",
+            "residual_calibration": "per-SKU median residual partially pooled toward low/medium/high demand-tier median; robust MAD scale shrunk toward tier scale; prior strength 3",
+            "residual_scale_shrinkage": "empirical-Bayes variance shrinkage toward demand-tier robust scale; prior strength 3",
             "solver": "scipy.optimize.milp (HiGHS), multiple-choice mixed-integer program",
             "objective": "expected holding cost + expected shortage cost + fixed ordering cost",
             "constraints": [
@@ -324,6 +601,8 @@ def main():
             f"{OUT}/inventory_optimizer_rolling_evaluation.csv",
             f"{OUT}/inventory_optimizer_demand_calibration.csv",
             f"{OUT}/inventory_optimizer_manifest.json",
+            f"{OUT}/inventory_optimizer_segment_results.csv",
+            f"{OUT}/inventory_optimizer_distribution_diagnostics.csv",
         ]
         provenance = build_provenance(
             "Service-Level Constrained Inventory Optimizer",
@@ -340,8 +619,20 @@ def main():
             "calibration_design": {
                 "non_overlapping_seven_day_windows": list(CALIBRATION_STARTS),
                 "windows_per_series": len(CALIBRATION_STARTS),
-                "purpose": "estimate per-SKU forecast bias and residual variability before inventory optimization",
+                "purpose": "robustly estimate per-SKU forecast bias and residual variability with low/medium/high demand-tier partial pooling",
+                "bias_estimator": "median forecast residual with shrinkage toward demand-tier median",
+                "scale_estimator": "1.4826 * median absolute deviation with tier-scale shrinkage",
+                "prior_strength": 3.0,
             },
+            "distribution_diagnostics": {
+                "reference_optimizer_distribution": "moment_lognormal",
+                "challengers": ["empirical_bootstrap", "conformal_residual"],
+                "scored_on": "five later, non-overlapping seven-day evaluation windows",
+                "results": _json_records(distribution_frame),
+                "limitations": "Five calibration blocks per series provide weak tail resolution; challenger metrics are diagnostics and do not automatically change the optimizer distribution.",
+            },
+            "capacity_diagnostics": scenario_capacity_diagnostics,
+            "segment_results": _json_records(segment_frame),
             "evaluation_design": {
                 "non_overlapping_seven_day_windows": list(EVALUATION_STARTS),
                 "windows_per_series": len(EVALUATION_STARTS),
@@ -374,6 +665,8 @@ def main():
             (decision_frame, "inventory_optimizer_item_decisions.csv", output_keys[2]),
             (evaluation_frame, "inventory_optimizer_rolling_evaluation.csv", output_keys[3]),
             (demand_inputs, "inventory_optimizer_demand_calibration.csv", output_keys[4]),
+            (segment_frame, "inventory_optimizer_segment_results.csv", output_keys[6]),
+            (distribution_frame, "inventory_optimizer_distribution_diagnostics.csv", output_keys[7]),
         ]
         for frame, filename, key in csvs:
             path = root / filename
@@ -389,6 +682,8 @@ def main():
         print(json.dumps({
             "evaluation_population": audit,
             "scenarios": scenario_metrics,
+            "capacity_diagnostics": scenario_capacity_diagnostics,
+            "distribution_diagnostics": _json_records(distribution_frame),
             "artifacts": output_keys,
         }, indent=2, default=str), flush=True)
 

@@ -13,7 +13,28 @@ st.markdown("""
 <style>
 .block-container {padding: 1.25rem 1.4rem 2.5rem; max-width: 1480px;}
 [data-testid="stDataFrame"], [data-testid="stTable"] {width: 100%; overflow-x: auto; border-radius: 12px;}
-[data-testid="stMetric"] {background: var(--secondary-background-color); border: 1px solid rgba(128,128,128,.18); padding: 13px 15px; border-radius: 14px;}
+[data-testid="stAppViewContainer"] {background: linear-gradient(145deg, #f7fafc 0%, #eef4f6 48%, #f8fafc 100%);}
+[data-testid="stSidebar"] {background: linear-gradient(180deg, #111c2e 0%, #142b3c 100%);}
+[data-testid="stSidebar"] * {color: #e7f0f5;}
+[data-testid="stSidebar"] [data-baseweb="select"] * {color: #102033;}
+[data-testid="stSidebar"] [role="radiogroup"] label {padding: .36rem .5rem; border-radius: 9px;}
+[data-testid="stSidebar"] [role="radiogroup"] label:hover {background: rgba(255,255,255,.09);}
+h1, h2, h3 {letter-spacing: -.025em;}
+h2 {margin-top: 1.5rem;}
+[data-testid="stMetric"] {background: linear-gradient(160deg, #ffffff 0%, #f7fbfc 100%); border: 1px solid rgba(15, 41, 61, .11); border-left: 3px solid #0f8b80; padding: 14px 16px; border-radius: 16px; box-shadow: 0 5px 18px rgba(15, 41, 61, .045);}
+[data-testid="stMetricLabel"] {font-weight: 650; color: #496274;}
+[data-testid="stMetricValue"] {color: #102b3b; font-variant-numeric: tabular-nums;}
+[data-testid="stVerticalBlockBorderWrapper"] {background: rgba(255,255,255,.75); border-color: rgba(15,41,61,.1); box-shadow: 0 6px 22px rgba(15,41,61,.035);}
+[data-testid="stPlotlyChart"] {background: rgba(255,255,255,.78); border: 1px solid rgba(15,41,61,.08); border-radius: 16px; padding: .35rem;}
+[data-testid="stDataFrame"], [data-testid="stTable"] {border: 1px solid rgba(15,41,61,.1); background: white;}
+[data-testid="stMarkdownContainer"] a {color: #087e78; font-weight: 600;}
+.frn-hero {display:flex; align-items:center; justify-content:space-between; gap:1.2rem; margin: .15rem 0 1.2rem; padding: 1.35rem 1.6rem; border-radius: 20px; color:#f7fbff; background:linear-gradient(112deg,#101d31 0%,#164354 58%,#087e78 100%); box-shadow:0 14px 32px rgba(15,41,61,.15);}
+.frn-hero h1 {font-size:clamp(1.55rem,3vw,2.35rem); font-weight:780; margin:0; color:#ffffff; line-height:1.12;}
+.frn-hero p {margin:.5rem 0 0; color:#d9e9ef; font-size:.96rem;}
+.frn-hero .frn-tag {font-size:.72rem; letter-spacing:.13em; font-weight:750; color:#c9f5e9; border:1px solid rgba(201,245,233,.35); background:rgba(255,255,255,.08); padding:.55rem .8rem; border-radius:999px; white-space:nowrap;}
+.frn-kicker {font-size:.72rem; font-weight:750; letter-spacing:.15em; text-transform:uppercase; color:#9ddbd1; margin-bottom:.35rem;}
+.stButton button, .stDownloadButton button {border:0; color:#fff; background:linear-gradient(110deg,#0f766e,#0b8d86); font-weight:700; box-shadow:0 5px 14px rgba(15,118,110,.17);}
+.stButton button:hover, .stDownloadButton button:hover {border:0; background:linear-gradient(110deg,#115e59,#0f766e); color:#fff; transform:translateY(-1px);}
 [data-testid="stMetricValue"] {font-size: clamp(1.25rem, 3vw, 2rem);}
 [data-testid="stTabs"] [role="tablist"] {gap: .35rem; border-bottom: 1px solid rgba(128,128,128,.20);}
 [data-testid="stTabs"] button[role="tab"] {border-radius: 10px 10px 0 0; padding: .55rem .9rem;}
@@ -85,7 +106,19 @@ def select_store_product(prefix: str):
         return None
 
 
-st.title("FreshRetailNet Demand Intelligence")
+st.markdown(
+    """
+    <section class="frn-hero">
+      <div>
+        <div class="frn-kicker">FreshRetailNet · Decision intelligence workspace</div>
+        <h1>From demand signals to better decisions</h1>
+        <p>Forecast quality · inventory service · capacity trade-offs · evidence-led experiments</p>
+      </div>
+      <div class="frn-tag">RESEARCH & OPERATIONS</div>
+    </section>
+    """,
+    unsafe_allow_html=True,
+)
 st.caption("Observed-sales forecasting · stockout diagnostics · probabilistic intervals · inventory policy simulation")
 overview = {}
 health = {}
@@ -136,6 +169,7 @@ workspace_pages = {
     "Availability & risk": ["Stockout diagnostics", "Forecast monitoring", "Demand censoring"],
     "Inventory decisions": ["Inventory optimisation", "Inventory scenarios", "Service-level optimizer"],
     "Experiments": ["Experiment lab", "Wavelet benchmark", "Forecast research benchmark"],
+    "Stakeholder reporting": ["Stakeholder briefing"],
 }
 st.sidebar.title("Navigation")
 st.sidebar.caption("Choose a task area, then open the page you need.")
@@ -150,6 +184,78 @@ st.sidebar.caption(
     "Start with the overview, explore the original data, then review forecasts "
     "and operational decisions. Advanced experiments are grouped separately."
 )
+
+
+if active_page == "Stakeholder briefing":
+    st.subheader("Stakeholder briefing studio")
+    st.caption(
+        "Turn the published inventory and forecasting evidence into an audience-ready "
+        "decision brief. Groq explains the results; it does not execute orders or change policies."
+    )
+    if not health.get("groq_configured", False):
+        st.warning(
+            "Groq is not configured on the API service yet. Add GROQ_API_KEY to the "
+            "Render API environment; keep the key off the Streamlit frontend."
+        )
+    audience = st.selectbox(
+        "Who is this briefing for?",
+        [
+            "Executive leadership",
+            "Supply chain & operations",
+            "Finance",
+            "Data science / analytics",
+            "Product stakeholders",
+        ],
+        key="stakeholder_audience",
+    )
+    focus = st.text_area(
+        "What decision should the briefing help with?",
+        value="Explain the service-level gap, replenishment bottleneck, forecast research findings and the next validation decisions.",
+        max_chars=600,
+        height=100,
+        key="stakeholder_focus",
+    )
+    if st.button("Generate stakeholder brief", type="primary", disabled=not health.get("groq_configured", False)):
+        with st.spinner("Preparing an evidence-grounded briefing from the latest published reports..."):
+            try:
+                response = requests.post(
+                    f"{API}/api/v1/stakeholder/brief",
+                    json={"audience": audience, "focus": focus},
+                    timeout=75,
+                )
+                response.raise_for_status()
+                st.session_state["stakeholder_brief_payload"] = response.json()
+            except Exception as exc:
+                st.error(f"Stakeholder briefing could not be generated: {exc}")
+    payload = st.session_state.get("stakeholder_brief_payload")
+    if payload:
+        st.markdown(
+            f"**Model:** {payload.get('model', 'unknown')} · "
+            f"**Generated:** {payload.get('generated_at_utc', 'timestamp unavailable')}"
+        )
+        if payload.get("missing_source_artifacts"):
+            st.warning(
+                "Some research artifacts were unavailable: "
+                + ", ".join(payload["missing_source_artifacts"])
+            )
+        st.markdown("---")
+        st.markdown(payload.get("brief_markdown", "No brief content returned."))
+        st.download_button(
+            "Download briefing as Markdown",
+            data=payload.get("brief_markdown", ""),
+            file_name="freshretailnet_stakeholder_brief.md",
+            mime="text/markdown",
+        )
+        st.caption(payload.get("disclaimer", "AI-generated decision support; verify all source metrics before circulation."))
+        st.caption(
+            "Source artifacts: " + ", ".join(payload.get("source_artifacts", []))
+        )
+    else:
+        st.info(
+            "Generate a briefing after the inventory optimizer and forecast research "
+            "workflows have published their latest summary artifacts."
+        )
+
 
 if active_page == "Executive overview":
     ev = point.get("evaluation", {})
@@ -1135,6 +1241,28 @@ if active_page == "Service-level optimizer":
                 key="inventory_optimizer_scenario",
             )
             selected_summary = display[display["scenario"].astype(str) == chosen_scenario].iloc[0]
+            capacity_diagnostics = next(
+                (
+                    item for item in optimizer.get("capacity_diagnostics", [])
+                    if item.get("scenario") == chosen_scenario
+                ),
+                {},
+            )
+            replenishment_stress = capacity_diagnostics.get("replenishment_utilization_pct", {})
+            st.markdown("#### Where capacity is binding")
+            cap1, cap2, cap3, cap4 = st.columns(4)
+            with cap1:
+                metric("Median replenishment use", f"{replenishment_stress.get('p50', float('nan')):.1f}%")
+            with cap2:
+                metric("Stores at 95%+ replenishment", f"{replenishment_stress.get('share_at_least_95_pct', float('nan')):.1f}%")
+            with cap3:
+                metric("Stores at 99%+ replenishment", f"{replenishment_stress.get('share_at_least_99_pct', float('nan')):.1f}%")
+            with cap4:
+                metric("95th percentile use", f"{replenishment_stress.get('p95', float('nan')):.1f}%")
+            size_stress = pd.DataFrame(capacity_diagnostics.get("by_store_size", []))
+            if not size_stress.empty:
+                st.markdown("**Capacity stress by store size**")
+                compact_table(size_stress, 180)
             s1, s2, s3 = st.columns(3)
             with s1:
                 metric("Target fill rate", f"{selected_summary['target_fill_rate'] * 100:.1f}%")
@@ -1145,6 +1273,55 @@ if active_page == "Service-level optimizer":
                     "Stores where target was feasible",
                     f"{int(selected_summary['service_target_met_store_count']):,} / {int(selected_summary['store_count']):,}",
                 )
+
+            try:
+                distribution_rows = pd.DataFrame(
+                    get_json("/api/v1/inventory/optimizer/distributions").get("rows", [])
+                )
+                if not distribution_rows.empty:
+                    overall_dist = distribution_rows[
+                        distribution_rows["segment_type"] == "overall"
+                    ].copy()
+                    st.markdown("#### Protection-period demand distribution challengers")
+                    if not overall_dist.empty:
+                        dcol1, dcol2 = st.columns(2)
+                        with dcol1:
+                            dist_fig = px.bar(
+                                overall_dist, x="distribution", y="median_mae",
+                                title="Median absolute error by distribution",
+                                color="distribution",
+                            )
+                            dist_fig.update_layout(height=330, xaxis_title="", showlegend=False)
+                            st.plotly_chart(dist_fig, use_container_width=True)
+                        with dcol2:
+                            coverage_fig = px.bar(
+                                overall_dist, x="distribution", y="central_80_coverage_pct",
+                                title="Central 80% interval coverage", color="distribution",
+                            )
+                            coverage_fig.add_hline(y=80, line_dash="dash", annotation_text="80% nominal")
+                            coverage_fig.update_layout(height=330, xaxis_title="", showlegend=False)
+                            st.plotly_chart(coverage_fig, use_container_width=True)
+                    compact_table(distribution_rows, 300)
+                    st.caption(
+                        "The lognormal remains the optimizer reference. Empirical-bootstrap and "
+                        "conformal methods are challenger diagnostics based on five calibration "
+                        "blocks per SKU; compare coverage and width before promotion."
+                    )
+            except Exception as exc:
+                st.info(f"Distribution diagnostics have not been published: {exc}")
+
+            try:
+                segment_rows = pd.DataFrame(
+                    get_json("/api/v1/inventory/optimizer/segments").get("rows", [])
+                )
+                if not segment_rows.empty:
+                    selected_segments = segment_rows[
+                        segment_rows["scenario"].astype(str) == chosen_scenario
+                    ]
+                    st.markdown("#### Realized fill rate by operating segment")
+                    compact_table(selected_segments, 240)
+            except Exception as exc:
+                st.info(f"Store and demand segment outputs are not available yet: {exc}")
 
             if not store_rows.empty:
                 chosen_stores = store_rows[store_rows["scenario"].astype(str) == chosen_scenario].copy()
@@ -1266,6 +1443,18 @@ if active_page == "Forecast research benchmark":
         weights = final_design.get("ensemble_weights", {})
         if weights:
             st.markdown("#### Ensemble weights selected on validation data")
+            diversity = final_design.get("ensemble_diversity", {})
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                metric("Effective model count", f"{diversity.get('effective_model_count', float('nan')):.2f}")
+            with d2:
+                metric("Contributing models", f"{diversity.get('positive_weight_model_count', 0)}")
+            with d3:
+                metric("Maximum single-model weight", f"{100 * diversity.get('maximum_model_weight', 0):.1f}%")
+            st.caption(
+                f"Validation weight cap: {100 * final_design.get('ensemble_weight_cap', 0.65):.0f}% per candidate. "
+                "This forces a diversified challenger; its test performance must still be judged against baseline."
+            )
             weight_df = pd.DataFrame(
                 [{"model": key, "weight": value} for key, value in weights.items()]
             )

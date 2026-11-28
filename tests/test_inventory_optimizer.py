@@ -9,6 +9,11 @@ from src.inventory_optimizer import (
     lognormal_expected_shortage,
     optimize_store_orders,
 )
+from scripts.optimized_inventory_decision_engine import (
+    attach_inventory_segments,
+    build_demand_distribution,
+    score_distribution_candidates,
+)
 
 
 def _one_sku(mean=10.0, std=2.0):
@@ -84,3 +89,54 @@ def test_optimizer_rejects_invalid_pack_size_and_duplicate_products():
             duplicate, target_fill_rate=0.9,
             storage_capacity=20.0, replenishment_capacity=20.0,
         )
+
+
+
+def test_seven_day_residual_calibration_uses_robust_tier_shrinkage():
+    from scripts.optimized_inventory_decision_engine import GROUP
+
+    rows = []
+    for sku, forecast, errors in (
+        ("p1", 8.0, [1.0, 1.2, 0.8, 1.1, 25.0]),
+        ("p2", 18.0, [2.0, 2.2, 1.8, 2.1, 2.4]),
+        ("p3", 35.0, [3.0, 3.2, 2.8, 3.1, 3.4]),
+    ):
+        for error in errors:
+            rows.append({
+                "store_id": "s1",
+                "product_id": sku,
+                "actual_protection_demand": forecast + error,
+                "forecast_protection_demand": forecast,
+            })
+    calibrated = attach_inventory_segments(build_demand_distribution(pd.DataFrame(rows)))
+    assert calibrated[GROUP].duplicated().sum() == 0
+    assert calibrated["demand_mean"].gt(0).all()
+    assert calibrated["demand_std"].gt(0).all()
+    assert set(calibrated["demand_segment"]) == {"low", "medium", "high"}
+    outlier_row = calibrated.loc[calibrated["product_id"] == "p1"].iloc[0]
+    assert abs(outlier_row["shrunk_residual_bias_7d"]) < 25.0
+    assert outlier_row["store_size_segment"] == "large"
+
+
+def test_lognormal_empirical_and_conformal_distribution_diagnostics_are_scored():
+    calibration_rows, evaluation_rows = [], []
+    for sku, forecast in (("p1", 8.0), ("p2", 18.0), ("p3", 35.0)):
+        for error in (-1.0, 0.5, 1.0, -0.5, 2.0):
+            calibration_rows.append({
+                "store_id": "s1", "product_id": sku,
+                "actual_protection_demand": forecast + error,
+                "forecast_protection_demand": forecast,
+            })
+        for error in (0.0, 1.0, -1.0, 0.5, 1.5):
+            evaluation_rows.append({
+                "store_id": "s1", "product_id": sku,
+                "actual_protection_demand": forecast + error,
+            })
+    calibrated = attach_inventory_segments(build_demand_distribution(pd.DataFrame(calibration_rows)))
+    scored = score_distribution_candidates(pd.DataFrame(evaluation_rows), calibrated)
+    assert set(scored["distribution"]) == {
+        "moment_lognormal", "empirical_bootstrap", "conformal_residual"
+    }
+    assert {"overall", "demand_segment"}.issubset(set(scored["segment_type"]))
+    assert scored["central_80_coverage_pct"].between(0, 100).all()
+    assert scored["central_80_mean_width"].ge(0).all()

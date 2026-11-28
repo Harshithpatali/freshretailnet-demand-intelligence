@@ -8,11 +8,61 @@ import pandas as pd
 from botocore.config import Config
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="FreshRetailNet Demand Intelligence API", version="1.0.0",
-              description="Read-only access to model, stockout and inventory backtest artifacts.")
-app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
-                   allow_credentials=False, allow_methods=["GET"], allow_headers=["*"])
+app = FastAPI(
+    title="FreshRetailNet Demand Intelligence API",
+    version="1.1.0",
+    description="Analytics artifacts and evidence-grounded Groq stakeholder explanations.",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+class StakeholderBriefRequest(BaseModel):
+    audience: str = Field(default="Executive leadership", max_length=80)
+    focus: str = Field(
+        default="Explain what the findings mean and what decisions should happen next.",
+        max_length=600,
+    )
+
+
+def _stakeholder_evidence() -> tuple[dict[str, Any], list[str], list[str]]:
+    """Read aggregate report JSON only; raw row-level predictions are not sent to Groq."""
+    evidence: dict[str, Any] = {}
+    available: list[str] = []
+    missing: list[str] = []
+    artifacts = {
+        "inventory_optimizer": "inventory-optimizer-artifacts/inventory_optimizer_summary.json",
+        "forecast_research": "forecast-research-artifacts/forecast_research_summary.json",
+    }
+    for name, key in artifacts.items():
+        try:
+            evidence[name] = _read_json(key)
+            available.append(key)
+        except Exception:
+            evidence[name] = None
+            missing.append(key)
+    return evidence, available, missing
+
+
+def _stakeholder_system_prompt() -> str:
+    return (
+        "You are a careful retail supply-chain analytics advisor. Use only facts in the "
+        "provided JSON evidence. Separate measured backtest outcomes, model-expected "
+        "outcomes, assumptions, and recommendations. Never describe simulated cost as "
+        "realized savings, observed sales as uncensored latent demand, or a model-expected "
+        "fill-rate constraint as achieved service. State uncertainty, sample limitations, "
+        "and missing evidence. Do not invent dates, currency, causal explanations, capacity "
+        "measurements, or business outcomes. Recommend reversible pilot decisions with "
+        "owners and measurable acceptance tests. This is decision support only; it does "
+        "not execute replenishment orders."
+    )
 
 def _client():
     required = ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
@@ -97,6 +147,8 @@ def health():
         "status": "ok",
         "r2_configured": configured,
         "artifact_cache_ttl_seconds": CACHE_TTL_SECONDS,
+        "groq_configured": bool(os.getenv("GROQ_API_KEY")),
+        "groq_model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
     }
 
 
@@ -314,6 +366,29 @@ def inventory_optimizer_decisions(
     }
 
 
+@app.get("/api/v1/inventory/optimizer/segments")
+def inventory_optimizer_segments():
+    key = "inventory-optimizer-artifacts/inventory_optimizer_segment_results.csv"
+    frame = _safe_csv(key)
+    frame = _require_columns(
+        frame, key,
+        {"scenario", "segment_type", "segment", "empirical_fill_rate", "shortage_units"},
+    )
+    return {"total": int(len(frame)), "rows": frame.fillna("").to_dict(orient="records")}
+
+
+@app.get("/api/v1/inventory/optimizer/distributions")
+def inventory_optimizer_distributions():
+    key = "inventory-optimizer-artifacts/inventory_optimizer_distribution_diagnostics.csv"
+    frame = _safe_csv(key)
+    frame = _require_columns(
+        frame, key,
+        {"distribution", "segment_type", "segment", "median_mae",
+         "central_80_coverage_pct", "central_80_mean_width"},
+    )
+    return {"total": int(len(frame)), "rows": frame.fillna("").to_dict(orient="records")}
+
+
 @app.get("/api/v1/forecast-research/summary")
 def forecast_research_summary():
     return _safe_json("forecast-research-artifacts/forecast_research_summary.json")
@@ -440,3 +515,71 @@ def forecast_quality_monitoring_time_exposure(limit: int = Query(5000, ge=1, le=
     df = _safe_csv(key)
     df = _require_columns(df, key, {"date", "stockout_exposure_bucket", "rows", "calibrated_coverage_pct"})
     return {"total": int(len(df)), "rows": df.head(limit).fillna("").to_dict(orient="records")}
+
+
+@app.post("/api/v1/stakeholder/brief")
+def generate_stakeholder_brief(request: StakeholderBriefRequest):
+    """Generate a factual stakeholder narrative from current R2 research summaries."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Groq is not configured. Add GROQ_API_KEY to the API service environment.",
+        )
+    evidence, sources, missing = _stakeholder_evidence()
+    if not sources:
+        raise HTTPException(
+            status_code=503,
+            detail="No inventory or forecasting research reports are available in R2.",
+        )
+    import json
+    try:
+        from groq import Groq
+
+        model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        client = Groq(api_key=api_key, timeout=50.0, max_retries=1)
+        prompt = {
+            "audience": request.audience,
+            "focus": request.focus,
+            "evidence": evidence,
+            "available_source_artifacts": sources,
+            "missing_source_artifacts": missing,
+            "required_sections": [
+                "Executive takeaway",
+                "Measured findings and their evaluation periods",
+                "Operational implications and capacity bottlenecks",
+                "Ranked decisions with owner and measurable acceptance test",
+                "What should not be promoted or claimed yet",
+                "Next validation plan",
+            ],
+        }
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _stakeholder_system_prompt()},
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False, default=str)},
+            ],
+            temperature=0.2,
+            max_completion_tokens=1800,
+        )
+        brief = completion.choices[0].message.content or ""
+        if not brief.strip():
+            raise RuntimeError("Groq returned an empty stakeholder brief.")
+        usage = getattr(completion, "usage", None)
+        return {
+            "brief_markdown": brief,
+            "model": model,
+            "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "source_artifacts": sources,
+            "missing_source_artifacts": missing,
+            "usage": usage.model_dump() if usage is not None else None,
+            "disclaimer": (
+                "AI-generated explanation of published research. Verify source metrics "
+                "and approve decisions with the responsible operational owner."
+            ),
+        }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Groq stakeholder briefing failed ({type(exc).__name__}). Check model availability and API quota.",
+        ) from exc

@@ -61,6 +61,7 @@ def test_ensemble_weights_are_nonnegative_and_sum_to_one():
     weights = select_ensemble_weights(actual, candidates)
     assert set(weights) == set(candidates)
     assert all(value >= 0 for value in weights.values())
+    assert max(weights.values()) <= 0.65 + 1e-6
     assert sum(weights.values()) == pytest.approx(1.0, abs=1e-7)
 
 
@@ -80,3 +81,17 @@ def test_fixed_seed_series_sample_is_independent_of_input_row_order():
     pd.testing.assert_frame_equal(first, shuffled)
     assert len(first) == 4
     assert not first.duplicated(["store_id", "product_id"]).any()
+
+
+
+def test_ensemble_weight_cap_forces_a_multi_model_candidate():
+    actual = np.arange(1.0, 21.0)
+    candidates = {
+        "near_perfect": actual.copy(),
+        "biased": actual + 4.0,
+        "noisy": actual + np.sin(actual) * 3.0,
+    }
+    weights = select_ensemble_weights(actual, candidates, max_weight=0.65)
+    assert max(weights.values()) <= 0.65 + 1e-6
+    assert sum(value > 1e-6 for value in weights.values()) >= 2
+    assert sum(weights.values()) == pytest.approx(1.0, abs=1e-7)

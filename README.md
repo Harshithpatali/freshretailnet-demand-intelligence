@@ -184,7 +184,15 @@ censored by stockouts, and illustrative cost/pack/capacity assumptions.
 
 Dashboard pages are available under **Inventory decisions → Service-level optimizer**
 and **Experiments → Forecast research benchmark** after the corresponding workflows
-successfully publish their R2 artifacts.
+successfully publish their R2 artifacts. The optimizer publishes robust residual
+calibration, empirical/conformal distribution challenger diagnostics, capacity stress at
+90/95/99% utilization and store-size/SKU-demand segment outcomes. Forecast ensembles
+cap any single model at 65% and publish effective model count.
+
+The Stakeholder reporting workspace uses Groq to turn aggregate research summaries into
+audience-specific findings and next-step recommendations. Configure GROQ_API_KEY on
+the FastAPI/Render service (never in the Streamlit browser environment); GROQ_MODEL is
+optional. The narrative is decision support only and does not place replenishment orders.
 
 ### First service-level optimizer result
 

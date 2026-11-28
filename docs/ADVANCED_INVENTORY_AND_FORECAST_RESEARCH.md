@@ -17,10 +17,19 @@ FreshRetailNet-LT external population. It splits the horizon into five non-overl
 seven-day calibration blocks followed by five non-overlapping seven-day evaluation
 blocks. For each store-product series, calibration produces:
 
-- a seven-day forecast mean adjusted by the mean historical forecast residual;
-- a residual standard deviation shrunk toward the cohort median because only five
-  calibration blocks are available;
-- a moment-matched lognormal demand distribution with non-negative support.
+- a seven-day forecast mean adjusted by a per-SKU median residual partially pooled
+  toward the median residual of its low/medium/high demand tier;
+- a robust residual scale estimated as 1.4826 times the median absolute deviation and
+  shrunk toward the demand-tier scale because only five calibration blocks are available;
+- a moment-matched lognormal reference distribution with non-negative support.
+
+The calibration report also preserves empirical seven-day demand samples and evaluates
+an empirical-bootstrap candidate and a segment-level conformal residual interval on the
+five later, disjoint evaluation windows. The comparison reports median absolute error,
+quantile pinball loss, central 80% coverage and interval width. These alternatives are
+diagnostics only: five samples per SKU are too few to establish reliable extreme tails,
+and the reference optimizer remains lognormal until a candidate demonstrates better
+out-of-sample service/cost behaviour.
 
 The distribution is an approximation, not an identified latent-demand model. The target
 remains observed sales and can be censored by stock availability.
@@ -70,7 +79,10 @@ not supplier or physical case-pack data. Cost inputs are also illustrative.
 The selected order quantities are evaluated on the five later, disjoint seven-day blocks.
 Reports include theoretical expected fill rate, empirical fill rate, cycle service level,
 expected shortage, leftover stock, simulated costs, storage and replenishment utilization,
-and the number of stores where the requested SLA was feasible.
+and the number of stores where the requested SLA was feasible. Capacity stress is
+reported at 90%, 95% and 99% replenishment utilization, with store-size cuts. Later-window
+fill, shortage and simulated cost are also split by small/medium/large store size and
+low/medium/high SKU demand tiers.
 
 R2 outputs:
 - `inventory-optimizer-artifacts/inventory_optimizer_summary.json`
@@ -128,7 +140,9 @@ availability summaries are retained.
 - Residual correction is trained on the first part of validation and checked on the
   later validation part.
 - Ensemble weights are non-negative and sum to one; they are learned from validation
-  predictions only.
+  predictions only, with a 0.65 maximum contribution per candidate to prevent the
+  previous single-model collapse. Effective model count, number of contributors and
+  maximum weight are published alongside test metrics.
 - Paired uncertainty intervals use store-product cluster weights and contiguous
   two-day date-block weights. With only seven dates in the final evaluation, date-block
   inference is coarse and is reported with this limitation.
@@ -163,3 +177,19 @@ establish latent demand, causal lost sales, actual retailer service guarantees o
 financial savings. A later untouched external temporal evaluation and retailer-specific
 capacity, cost, volume, MOQ, pack-size and lead-time information remain necessary before
 operational promotion.
+
+
+## Groq stakeholder briefing
+
+The API exposes POST /api/v1/stakeholder/brief. The Streamlit Stakeholder reporting
+workspace requests an audience-specific explanation of the latest inventory and forecast
+research summaries. It sends aggregate JSON reports only; the API does not send row-level
+predictions to Groq. The system prompt requires the model to distinguish expected service
+from empirical fill, simulated costs from realized savings, and observed sales from latent
+demand. The briefing is decision support and never executes purchase orders.
+
+Configure GROQ_API_KEY as a secret environment variable on the FastAPI/Render service.
+Optionally set GROQ_MODEL; the default is openai/gpt-oss-120b. Do not put the key in
+Streamlit secrets, browser code, source control, or a public environment file. The
+briefing requires current summary artifacts in R2 and should be reviewed by an
+operations owner before being circulated.

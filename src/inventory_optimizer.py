@@ -314,6 +314,12 @@ def optimize_store_orders(
         "sku_count": int(len(items)),
         "ordered_sku_count": int((decisions.order_qty > 0).sum()),
         "infeasible_service_constraint_fallback": bool(used_fallback),
+        "replenishment_capacity_binding": bool(
+            used_replenishment >= 0.95 * replenishment_capacity
+        ) if replenishment_capacity > 0 else False,
+        "storage_capacity_binding": bool(
+            used_storage >= 0.95 * storage_capacity
+        ) if storage_capacity > 0 else False,
     }
 
 

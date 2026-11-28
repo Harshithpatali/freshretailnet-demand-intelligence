@@ -49,6 +49,7 @@ def test_health_reports_unconfigured_r2(monkeypatch):
     assert health["status"] == "ok"
     assert health["r2_configured"] is False
     assert health["artifact_cache_ttl_seconds"] >= 1
+    assert health["groq_configured"] is False
 
 
 def test_forecast_simulation_handles_multiple_series():
@@ -188,3 +189,32 @@ def test_forecast_research_summary_api_reads_published_report(monkeypatch):
     expected = {"final_research_comparison": {"ensemble_weights": {"baseline": 1.0}}}
     monkeypatch.setattr(api, "_safe_json", lambda key: expected if key == "forecast-research-artifacts/forecast_research_summary.json" else {})
     assert api.forecast_research_summary() == expected
+
+
+
+def test_stakeholder_brief_requires_server_side_groq_key(monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    request = api.StakeholderBriefRequest(
+        audience="Executive leadership",
+        focus="Explain the service-level gap and next decisions.",
+    )
+    with pytest.raises(HTTPException) as exc:
+        api.generate_stakeholder_brief(request)
+    assert exc.value.status_code == 503
+    assert "GROQ_API_KEY" in exc.value.detail
+
+
+def test_stakeholder_evidence_uses_only_aggregate_json_artifacts(monkeypatch):
+    artifacts = {
+        "inventory-optimizer-artifacts/inventory_optimizer_summary.json": {
+            "scenario_results": [{"scenario": "balanced_90pct", "empirical_fill_rate": 0.8}]
+        },
+        "forecast-research-artifacts/forecast_research_summary.json": {
+            "final_research_comparison": {"ensemble_weight_cap": 0.65}
+        },
+    }
+    monkeypatch.setattr(api, "_read_json", lambda key: artifacts[key])
+    evidence, sources, missing = api._stakeholder_evidence()
+    assert evidence["inventory_optimizer"]["scenario_results"][0]["empirical_fill_rate"] == 0.8
+    assert len(sources) == 2
+    assert missing == []
