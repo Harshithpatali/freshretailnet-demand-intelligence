@@ -413,17 +413,18 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
         api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the evidence."),
         compact, ["inventory_optimizer_summary.json", "forecast_research_summary.json"], [],
     )
-    assert len(parts) == 3
+    assert len(parts) == 4
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 900
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 650
         for part in parts
     )
     assert estimated_reserved_tokens < 7800
     assert all(len(part["user_message"]) < 5000 for part in parts)
     assert len(parts[0]["user_message"]) < 3000
-    assert len(parts[1]["user_message"]) < 4000
-    assert len(parts[2]["user_message"]) < 3500
+    assert len(parts[1]["user_message"]) < 3000
+    assert len(parts[2]["user_message"]) < 4000
+    assert len(parts[3]["user_message"]) < 3500
 
 
 
@@ -469,7 +470,7 @@ def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
 
 
 
-def test_stakeholder_brief_generates_three_sections_and_combines_them(monkeypatch):
+def test_stakeholder_brief_generates_four_sections_and_combines_them(monkeypatch):
     from types import SimpleNamespace
 
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
@@ -487,17 +488,23 @@ def test_stakeholder_brief_generates_three_sections_and_combines_them(monkeypatc
         api,
         "_compact_stakeholder_evidence",
         lambda _raw: {
-            "inventory": {"source_population": "FreshRetailNet-LT", "empirical_fill_rate": 0.8},
-            "forecast": {"source_population": "FreshRetailNet-50K", "sample_series": 3000},
+            "inventory": {"population": "FreshRetailNet-LT", "empirical_fill_rate": 0.8},
+            "forecast": {"sample_series": 3000},
         },
     )
 
     calls = []
+    contents = [
+        "Inventory service outcomes explained.",
+        "Inventory constraints and distributions explained.",
+        "Forecast model comparisons explained.",
+        "Bootstrap, ablation and experiment decisions explained.",
+    ]
 
     class FakeCompletions:
         def create(self, **kwargs):
             calls.append(kwargs)
-            content = ["Inventory metric explanations.", "Forecast model comparisons.", "Forecast uncertainty experiments."][len(calls) - 1]
+            content = contents[len(calls) - 1]
             usage = SimpleNamespace(
                 model_dump=lambda: {
                     "prompt_tokens": 100,
@@ -519,17 +526,17 @@ def test_stakeholder_brief_generates_three_sections_and_combines_them(monkeypatc
         api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain all metrics.")
     )
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert all(call["model"] == "openai/gpt-oss-120b" for call in calls)
     assert "FreshRetailNet-LT" in calls[0]["messages"][1]["content"]
-    assert "FreshRetailNet-50K" in calls[1]["messages"][1]["content"]
+    assert "FreshRetailNet-LT" in calls[1]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[2]["messages"][1]["content"]
-    assert all(call["max_completion_tokens"] == 900 for call in calls)
-    assert "Inventory metric explanations." in result["brief_markdown"]
-    assert "Forecast model comparisons." in result["brief_markdown"]
-    assert "Forecast uncertainty experiments." in result["brief_markdown"]
-    assert result["generation_strategy"] == "three_part_groq"
-    assert result["usage"]["totals"]["total_tokens"] == 900
+    assert "FreshRetailNet-50K" in calls[3]["messages"][1]["content"]
+    assert all(call["max_completion_tokens"] == 650 for call in calls)
+    for content in contents:
+        assert content in result["brief_markdown"]
+    assert result["generation_strategy"] == "four_part_groq"
+    assert result["usage"]["totals"]["total_tokens"] == 1200
 
 
 
@@ -667,10 +674,10 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
         api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the findings."),
         evidence, ["inventory_optimizer_summary.json", "forecast_research_summary.json"], [],
     )
-    assert len(parts) == 3
+    assert len(parts) == 4
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 900
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 650
         for part in parts
     )
     assert estimated_reserved_tokens < 7800

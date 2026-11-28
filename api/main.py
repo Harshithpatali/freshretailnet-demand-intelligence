@@ -374,32 +374,56 @@ def _stakeholder_prompt_parts(
 ) -> list[dict[str, str]]:
     import json
 
-    # Focus is supplied once and capped so a long user instruction cannot consume
-    # the TPM budget three times.
     focus = " ".join(request.focus.split())[:180]
     audience = " ".join(request.audience.split())[:80]
+    inventory = evidence.get("inventory", {})
+    forecast = evidence.get("forecast", {})
 
-    inventory_payload = {
-        "part": "1/3 Inventory optimisation",
+    inventory_service = {
+        "population": inventory.get("population", {}),
+        "calibration_windows_per_series": inventory.get("calibration_windows_per_series"),
+        "evaluation_windows_per_series": inventory.get("evaluation_windows_per_series"),
+        "scenario": inventory.get("scenario", {}),
+    }
+    inventory_service_payload = {
+        "part": "1/4 Inventory service outcomes",
         "dataset": "FreshRetailNet-LT",
         "audience": audience,
         "focus": focus,
         "source_available": any("inventory_optimizer_summary" in item for item in sources),
         "source_missing": any("inventory_optimizer_summary" in item for item in missing),
-        "evidence": evidence.get("inventory", {}),
+        "evidence": inventory_service,
         "instructions": (
-            "Write 350-400 words. Explain the 70-day population (2,613 series, 842 stores), "
-            "five 7-day calibration and five later evaluation windows. Define target, theoretical "
-            "and empirical fill plus cycle service level; interpret their gap, capacity utilisation "
-            "and bottlenecks, segment shortages, median MAE, pinball loss, 80% coverage and interval "
-            "width. Compare lognormal, empirical-bootstrap and conformal demand distributions. "
-            "Costs are normalized simulations, not savings. End with 2 owner-assigned tests."
+            "Write 200-250 words. Explain the 70-day population and five 7-day calibration plus "
+            "five later evaluation windows. Define target fill, theoretical expected fill, empirical "
+            "fill and cycle service level (CSL); explain percentage-point gaps and what they mean. "
+            "Interpret the balanced scenario's cost and service metrics. Explicitly say costs are "
+            "normalized simulation assumptions, not actual savings; observed sales may be censored."
         ),
     }
 
-    forecast = evidence.get("forecast", {})
+    inventory_constraints = {
+        "capacity": inventory.get("capacity", {}),
+        "segments": inventory.get("segments", []),
+        "reference_distribution": inventory.get("reference_distribution"),
+        "distribution_challengers": inventory.get("distribution_challengers"),
+        "distribution_scores": inventory.get("distribution_scores", []),
+    }
+    inventory_constraints_payload = {
+        "part": "2/4 Inventory constraints and distribution experiments",
+        "dataset": "FreshRetailNet-LT",
+        "audience": audience,
+        "evidence": inventory_constraints,
+        "instructions": (
+            "Write 200-250 words. Define replenishment/storage utilisation and percentiles, explain "
+            "which capacity is binding, interpret segment shortages and explain median MAE, pinball "
+            "loss, central-80% coverage and interval width. Compare moment-lognormal, empirical "
+            "bootstrap and conformal alternatives using only supplied scores. Give 2 operational "
+            "tests with owners and numeric acceptance criteria; do not claim the service target passed."
+        ),
+    }
+
     forecast_metrics = {
-        "dataset": "FreshRetailNet-50K",
         "sample_series": forecast.get("sample_series"),
         "rolling_folds": forecast.get("rolling_folds"),
         "rolling_metrics": forecast.get("rolling_metrics", []),
@@ -408,20 +432,20 @@ def _stakeholder_prompt_parts(
         "experiment_methods": forecast.get("experiment_methods", {}),
     }
     forecast_metrics_payload = {
-        "part": "2/3 Forecast accuracy and model comparisons",
+        "part": "3/4 Forecast accuracy and model comparisons",
+        "dataset": "FreshRetailNet-50K",
         "audience": audience,
         "evidence": forecast_metrics,
         "instructions": (
-            "Write 350-400 words. Define MAE, RMSE, WAPE and signed bias. Compare every supplied "
-            "model on pooled rolling and final-period metrics; interpret relative improvements. "
-            "Explain Fourier/STL, spectral, wavelet, residual correction and ensemble experiments. "
-            "Lower error is better; bias near zero is preferable. Forecast accuracy is not business "
-            "savings. State that the final seven-day period was previously used, not untouched."
+            "Write 250-300 words. Define MAE, RMSE, WAPE and signed bias in plain language. Compare "
+            "all supplied models on rolling and final-period metrics, explaining relative improvements. "
+            "Explain Fourier/STL, spectral, wavelet, residual correction and ensemble methods. Lower "
+            "error is better; bias near zero is preferable. Forecast accuracy is not business savings. "
+            "State that the seven-day evaluation period was previously used, not untouched."
         ),
     }
 
     forecast_experiments = {
-        "dataset": "FreshRetailNet-50K",
         "evaluation_period": forecast.get("evaluation_period"),
         "ensemble_weights": forecast.get("ensemble_weights", {}),
         "ensemble_effective_models": forecast.get("ensemble_effective_models"),
@@ -430,30 +454,30 @@ def _stakeholder_prompt_parts(
         "holdout_status": forecast.get("holdout_status", ""),
     }
     forecast_experiments_payload = {
-        "part": "3/3 Statistical evidence and experiment decisions",
+        "part": "4/4 Statistical evidence and experiment decisions",
+        "dataset": "FreshRetailNet-50K",
         "audience": audience,
         "evidence": forecast_experiments,
         "instructions": (
-            "Write 300-350 words. Interpret paired-bootstrap improvements and 95% intervals; "
-            "intervals crossing zero are inconclusive. Explain wavelet-versus-spectral ablation, "
-            "ensemble weights and effective model count (do not call a single-model selection a blend). "
-            "Rank 2-3 next experiments with owners and numeric acceptance tests. Require a later "
-            "untouched temporal holdout before promotion. Keep the two datasets separate."
+            "Write 200-250 words. Interpret paired-bootstrap improvements and 95% intervals; an "
+            "interval crossing zero is inconclusive. Explain direct wavelet-vs-spectral ablation, "
+            "ensemble weights and effective model count; do not call a single-model selection a blend. "
+            "Rank 2-3 next experiments with owners and measurable acceptance tests. Require a later "
+            "untouched temporal holdout before promotion. Keep datasets separate."
         ),
     }
+    payloads = [
+        ("Inventory service outcomes", inventory_service_payload),
+        ("Inventory constraints and distribution experiments", inventory_constraints_payload),
+        ("Forecast accuracy and model comparisons", forecast_metrics_payload),
+        ("Statistical evidence and experiment decisions", forecast_experiments_payload),
+    ]
     return [
         {
-            "title": "Inventory optimisation and service level",
-            "user_message": json.dumps(inventory_payload, ensure_ascii=False, default=str, separators=(",", ":")),
-        },
-        {
-            "title": "Forecast accuracy and model comparisons",
-            "user_message": json.dumps(forecast_metrics_payload, ensure_ascii=False, default=str, separators=(",", ":")),
-        },
-        {
-            "title": "Statistical evidence and experiment decisions",
-            "user_message": json.dumps(forecast_experiments_payload, ensure_ascii=False, default=str, separators=(",", ":")),
-        },
+            "title": title,
+            "user_message": json.dumps(payload, ensure_ascii=False, default=str, separators=(",", ":")),
+        }
+        for title, payload in payloads
     ]
 
 
@@ -1006,7 +1030,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         parts = _stakeholder_prompt_parts(request, evidence, sources, missing)
         system_message = _stakeholder_system_prompt()
         max_prompt_characters = 5_000
-        max_completion_tokens = 900
+        max_completion_tokens = 650
         prompt_sizes = [
             len(system_message) + len(part["user_message"])
             for part in parts
@@ -1025,7 +1049,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
                 detail={
                     "code": "stakeholder_prompt_too_large",
                     "message": (
-                        "The three-part stakeholder briefing exceeds the safe limit of "
+                        "The four-part stakeholder briefing exceeds the safe limit of "
                         f"{max_prompt_characters:,} characters per section or the estimated "
                         f"Groq token budget. Part sizes: {prompt_sizes}; estimated reserved "
                         f"tokens: {estimated_reserved_tokens:,}."
@@ -1095,7 +1119,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         return {
             "brief_markdown": brief,
             "model": model,
-            "generation_strategy": "three_part_groq",
+            "generation_strategy": "four_part_groq",
             "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "source_artifacts": sources,
             "missing_source_artifacts": missing,

@@ -60,31 +60,32 @@ def main() -> None:
 
     markdown = result.get("brief_markdown", "")
     required_sections = (
-        "## Part 1. Inventory optimisation and service level",
-        "## Part 2. Forecast accuracy and model comparisons",
-        "## Part 3. Statistical evidence and experiment decisions",
+        "## Part 1. Inventory service outcomes",
+        "## Part 2. Inventory constraints and distribution experiments",
+        "## Part 3. Forecast accuracy and model comparisons",
+        "## Part 4. Statistical evidence and experiment decisions",
     )
     absent_sections = [heading for heading in required_sections if heading not in markdown]
     if absent_sections:
         raise RuntimeError(f"Generated report is missing sections: {absent_sections}")
 
     sections = markdown.split("## Part ")[1:]
-    if len(sections) != 3:
+    if len(sections) != 4:
         raise RuntimeError(f"Expected three report sections, received {len(sections)}.")
     short_sections = [
         index for index, section in enumerate(sections, start=1)
-        if len(section.split()) < 220
+        if len(section.split()) < 150
     ]
     if short_sections:
         raise RuntimeError(f"Generated sections appear truncated or too short: {short_sections}")
     usage_parts = (result.get("usage") or {}).get("parts") or []
     capped_parts = [
         index for index, item in enumerate(usage_parts, start=1)
-        if isinstance(item, dict) and item.get("completion_tokens", 0) >= 880
+        if isinstance(item, dict) and item.get("completion_tokens", 0) >= 630
     ]
     if capped_parts:
         raise RuntimeError(
-            f"Groq reached the 900-token completion cap in sections {capped_parts}; "
+            f"Groq reached the 650-token completion cap in sections {capped_parts}; "
             "report may be truncated."
         )
 
