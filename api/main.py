@@ -1027,7 +1027,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
                 },
             )
 
-        client = Groq(api_key=api_key, timeout=60.0, max_retries=0)
+        client = Groq(api_key=api_key, timeout=45.0, max_retries=0)
         generated_sections = []
         usage_by_part = []
         for index, part in enumerate(parts, start=1):
