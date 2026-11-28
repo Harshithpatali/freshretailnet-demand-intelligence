@@ -138,7 +138,7 @@ def main():
     [pl.col("dt").str.to_date(strict=False).alias("target_date")]+
     [pl.col(c).alias(f"target_{c}") for c in calcols]
    ).unique(subset=GROUP+["target_date"])
-  audits=[]; fold_rows=[]; selection_rows=[]; prediction_rows=[]; calibration_audit=[]
+  audits=[]; fold_rows=[]; selection_rows=[]; prediction_frames=[]; calibration_audit=[]
   for h in HORIZONS:
    hf=frame.sort(GROUP+["date"]).with_columns([
     pl.col("sale_amount").shift(-h).over(GROUP).alias("target"),
@@ -273,17 +273,25 @@ def main():
      {"horizon_days":h,"fold":fi,"model":"current_lightgbm_baseline",**score(ev.target,pb)},
      {"horizon_days":h,"fold":fi,"model":"validation_gated_segment_specialists",**score(ev.target,routed)},
      {"horizon_days":h,"fold":fi,"model":"validation_gated_segment_specialists_calibrated",**score(ev.target,calibrated)}])
-    for idx,(_,r) in enumerate(ev.iterrows()):
-     prediction_rows.append({"horizon_days":h,"fold":fi,"target_date":r.target_date.date().isoformat(),
-      "store_id":str(r.store_id),"product_id":str(r.product_id),"segment":str(r.demand_segment),
-      "actual":float(r.target),"baseline_prediction":float(pb[idx]),"selected_prediction":float(routed[idx]),
-      "calibrated_prediction":float(calibrated[idx])})
+    # Build held-out prediction blocks vectorially; avoid row-wise iterrows
+    # over the full cross-sectional evaluation population.
+    prediction_frames.append(pd.DataFrame({
+     "horizon_days":h,"fold":fi,
+     "target_date":ev.target_date.dt.strftime("%Y-%m-%d").to_numpy(),
+     "store_id":ev.store_id.astype(str).to_numpy(),
+     "product_id":ev.product_id.astype(str).to_numpy(),
+     "segment":ev.demand_segment.astype(str).to_numpy(),
+     "actual":ev.target.to_numpy(dtype=float),
+     "baseline_prediction":pb,
+     "selected_prediction":routed,
+     "calibrated_prediction":calibrated,
+    }))
     audits.append({"horizon_days":h,"fold":fi,"train_dates":len(td),"validation_dates":len(vd),"test_dates":len(ed),
       "train_start":str(min(td).date()),"train_end":str(max(td).date()),
       "validation_start":str(min(vd).date()),"validation_end":str(max(vd).date()),
       "test_start":str(min(ed).date()),"test_end":str(max(ed).date()),
       "train_rows":len(tr),"validation_rows":len(va),"test_rows":len(ev)})
-  fdf=pd.DataFrame(fold_rows); sdf=pd.DataFrame(selection_rows); pdf=pd.DataFrame(prediction_rows)
+  fdf=pd.DataFrame(fold_rows); sdf=pd.DataFrame(selection_rows); pdf=pd.concat(prediction_frames,ignore_index=True) if prediction_frames else pd.DataFrame()
   # Refuse to publish partial or malformed prediction outputs.  The CSV stores
   # one row per entity/date with both model predictions, so group by horizon only.
   if pdf.empty:
