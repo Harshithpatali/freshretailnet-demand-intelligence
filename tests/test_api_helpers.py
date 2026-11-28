@@ -142,3 +142,23 @@ def test_json_safe_replaces_nan_and_infinity_with_null():
         "positive_inf": None,
         "nested": [{"negative_inf": None, "value": 3.0}],
     }
+
+
+def test_series_options_returns_store_dropdown_and_store_scoped_products(monkeypatch):
+    frame = pd.DataFrame({
+        "store_id": ["10", "2", "1", "2", "10", "1"],
+        "product_id": ["p3", "p2", "p1", "p4", "p5", "p2"],
+    })
+    monkeypatch.setattr(api, "_safe_csv", lambda _key: frame)
+
+    result = api.series_options(store_id="2")
+
+    assert result["store_ids"] == ["1", "2", "10"]
+    assert result["product_ids"] == ["p2", "p4"]
+    assert result["selected_store_id"] == "2"
+
+
+def test_dataset_eda_endpoint_returns_published_report(monkeypatch):
+    expected = {"dataset": "FreshRetailNet-50K", "feature_count": 19}
+    monkeypatch.setattr(api, "_safe_json", lambda key: expected if key == "dataset-eda/full_dataset_eda.json" else {})
+    assert api.dataset_eda() == expected
