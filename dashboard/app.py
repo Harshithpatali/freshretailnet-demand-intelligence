@@ -265,6 +265,64 @@ with tabs[2]:
             "No conditional-calibration experiment results are published yet. "
             "The global split-conformal interval remains the active reported method."
         )
+
+    risk_cal = quant.get("risk_conditioned_conformal_calibration", {})
+    if risk_cal:
+        st.markdown("#### Candidate: predicted high-stockout risk decile calibration")
+        st.caption(
+            "A LightGBM classifier estimates the probability of 16+ stockout hours using only "
+            "prior sales/availability history and calendar features. Conformal adjustments are "
+            "fit by validation risk decile and reused on evaluation rows."
+        )
+        risk_metrics = risk_cal.get("risk_model_metrics", {})
+        val_risk = risk_metrics.get("validation", {})
+        eval_risk = risk_metrics.get("evaluation", {})
+        r1, r2, r3, r4 = st.columns(4)
+        with r1: metric("Risk-model evaluation ROC-AUC", f"{eval_risk.get('roc_auc', float('nan')):.3f}")
+        with r2: metric("Risk-model evaluation PR-AUC", f"{eval_risk.get('average_precision', float('nan')):.3f}")
+        with r3: metric("Top-decile precision", f"{risk_metrics.get('evaluation_top_decile_precision_pct', float('nan')):.1f}%")
+        with r4: metric("Top-decile recall", f"{risk_metrics.get('evaluation_top_decile_recall_pct', float('nan')):.1f}%")
+        global_risk_strata = quant.get("evaluation_calibrated_stockout_exposure_strata", {})
+        candidate_risk_strata = quant.get("evaluation_risk_conditioned_stockout_exposure_strata", {})
+        risk_rows = []
+        for bucket, candidate in candidate_risk_strata.items():
+            baseline = global_risk_strata.get(bucket, {})
+            risk_rows.append({
+                "Actual exposure": bucket,
+                "Rows": candidate.get("rows", 0),
+                "Global coverage (%)": baseline.get("coverage_pct"),
+                "Risk-conditioned coverage (%)": candidate.get("coverage_pct"),
+                "Coverage change (pp)": (
+                    candidate.get("coverage_pct", 0) - baseline.get("coverage_pct", 0)
+                    if baseline else None
+                ),
+                "Global width": baseline.get("mean_interval_width"),
+                "Risk-conditioned width": candidate.get("mean_interval_width"),
+            })
+        if risk_rows:
+            risk_table = pd.DataFrame(risk_rows)
+            compact_table(risk_table, 260)
+            high = risk_table[risk_table["Actual exposure"].astype(str) == "16_hours"]
+            if not high.empty:
+                hr = high.iloc[0]
+                c1, c2, c3 = st.columns(3)
+                with c1: metric("16+ global coverage", f"{hr['Global coverage (%)']:.1f}%")
+                with c2: metric("16+ risk-conditioned coverage", f"{hr['Risk-conditioned coverage (%)']:.1f}%")
+                with c3:
+                    change = (
+                        hr["Risk-conditioned width"] / hr["Global width"] - 1
+                        if pd.notna(hr["Global width"]) and hr["Global width"] > 0
+                        else float("nan")
+                    )
+                    metric("16+ width change", f"{change * 100:+.1f}%" if pd.notna(change) else "N/A")
+        st.markdown("#### Predicted-risk decile diagnostics")
+        compact_table(pd.DataFrame(risk_cal.get("evaluation_risk_deciles", [])), 300)
+        st.warning(
+            "Risk-conditioned intervals are experimental. Keep the global interval active unless the 16+ hour "
+            "coverage improves materially and the interval-width increase is acceptable."
+        )
+    else:
+        st.info("The forecast-time stockout-risk model and risk-decile calibration are not yet published.")
     st.warning("Global held-out coverage remains below the 80% nominal target in the existing benchmark. Read all exposure buckets with their sample sizes; intervals are not yet uniformly calibrated.")
 
 with tabs[3]:
