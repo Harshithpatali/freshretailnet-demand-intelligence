@@ -48,7 +48,7 @@ The scaled capacity and order limits, MOQ and pack size are illustrative uniform
 
 Run: **Inventory Lead-Time and Constraint Scenarios**.
 
-## 5. Forecast error, interval and drift monitoring
+## 4. Forecast error, interval and drift monitoring
 
 scripts/forecast_monitoring.py reads the quantile prediction artifact and reports:
 - daily and aggregate MAE, RMSE, WAPE and signed bias;
@@ -62,6 +62,26 @@ PSI compares the first and second chronological halves of the current evaluation
 The initial report is a **retrospective batch monitor over the held-out evaluation artifact**. It is not yet continuous production monitoring: live forecast/actual records must be appended with consistent identifiers and dates, and metrics can only be computed after actual outcomes mature.
 
 Run: **Forecast Quality and Drift Monitoring**.
+
+## 5. Conditional interval calibration by prior exposure
+
+The quantile training pipeline now contains an experimental conditional split-conformal alternative to the original global interval adjustment.
+
+- A prior seven-day maximum stockout-hours feature is computed from historical daily rows, shifted so the current target day's stock status is never used to select its interval.
+- Validation residual scores are grouped using that prior-exposure feature.
+- Groups with fewer than 1,000 validation rows fall back to the global adjustment.
+- Other group adjustments are shrunk toward the global validation adjustment with a prior strength of 2,000 rows.
+- Both global and conditional intervals are scored on the held-out evaluation rows; coverage and mean width are compared by contemporaneous evaluation exposure for diagnosis only.
+
+This is a candidate calibration method, not a production promotion. A higher 16+ hour coverage rate is useful only if interval width remains operationally reasonable. The evaluation stratification is retrospective; the calibration decision itself uses only prior exposure context and validation residuals.
+
+Run: **Train FreshRetailNet Quantile Forecasts**. Review `conditional_conformal_calibration` in the R2 quantile metrics and the conditional coverage/width comparison in the dashboard.
+
+## 6. Later untouched evaluation
+
+The current benchmark evaluation ends on 2024-07-02. A separate `raw/later_holdout.parquet` snapshot is required before a genuinely later test can be scored. The fail-closed readiness gate requires at least 14 strictly later, contiguous dates, no duplicate store-product-date rows and at least 95% of the benchmark series population. It only validates data readiness; it does not score models.
+
+See [Later Untouched Holdout Readiness](LATER_HOLDOUT_READINESS.md). Do not recycle dates already used in the existing benchmark as a later test.
 
 ## API and dashboard
 
