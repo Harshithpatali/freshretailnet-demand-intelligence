@@ -109,9 +109,33 @@ def main():
         invalid = train_hourly.filter(~pl.col("stock_status").is_in([0, 1])).height
         invalid += eval_hourly.filter(~pl.col("stock_status").is_in([0, 1])).height
         if invalid:
-            raise RuntimeError(f"Found {invalid:,} stock-status slots outside documented 0/1 encoding")
-        # Status 0 = available, status 1 = out of stock, following the dataset
-        # convention already used by scripts/stockout_diagnostics.py.
+            raise RuntimeError(f"Found {invalid:,} stock-status slots outside 0/1 encoding")
+
+        # Validate the assumed coding: 1 = out of stock and hours 6..21
+        # reconcile exactly to the source's independent 16-hour count.
+        def verify_status_encoding(hourly, label):
+            derived = (
+                hourly.group_by(["store_id", "product_id", "dt"])
+                .agg(
+                    ((pl.col("stock_status") == 1) & pl.col("hour_of_day").is_between(6, 21))
+                    .sum().alias("derived_stockout_hours_06_22"),
+                    pl.col("stock_hour6_22_cnt").first().alias("source_stockout_hours_06_22"),
+                )
+            )
+            mismatch = derived.filter(
+                pl.col("derived_stockout_hours_06_22") != pl.col("source_stockout_hours_06_22")
+            )
+            if mismatch.height:
+                raise RuntimeError(
+                    f"{label}: hourly status coding does not reconcile to stock_hour6_22_cnt "
+                    f"for {mismatch.height:,} rows; examples={mismatch.head(5).to_dicts()}"
+                )
+            print(f"{label}: stock status reconciled for {derived.height:,} daily rows")
+
+        verify_status_encoding(train_hourly, "train")
+        verify_status_encoding(eval_hourly, "evaluation")
+
+        # Store-product-hour rates are fitted from train only.
         series_rates = (
             train_hourly.filter(pl.col("stock_status") == 0)
             .group_by(["store_id", "product_id", "hour_of_day"])
