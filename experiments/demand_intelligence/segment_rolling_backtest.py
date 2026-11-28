@@ -20,8 +20,6 @@ GROUP=["store_id","product_id"]
 HORIZONS=(1,7,14)
 FOLDS=int(os.getenv("ROLLING_FOLDS","5"))
 BLOCK_DAYS=7
-BOOTSTRAP_REPS=500
-BOOTSTRAP_SEED=20261128
 MIN_VALIDATION_GAIN_PCT=0.5
 MIN_TRAIN_DATES=56
 MIN_HURDLE_VALIDATION_POSITIVES=20
@@ -47,67 +45,6 @@ def score(y,p):
  return {"mae":float(np.mean(np.abs(y-p))),"rmse":float(np.sqrt(np.mean((y-p)**2))),
   "wape_pct":float(100*np.abs(y-p).sum()/max(np.abs(y).sum(),1e-9)),
   "bias_pct":float(100*(p-y).sum()/max(y.sum(),1e-9))}
-
-def paired_cluster_bootstrap(frame, reps=BOOTSTRAP_REPS, seed=BOOTSTRAP_SEED):
- """Paired store-product cluster bootstrap for calibrated vs production baseline.
-
- Resamples entity clusters, retaining all dates/folds for each sampled entity.
- This quantifies cross-sectional uncertainty; it does not replace temporal
- uncertainty across future time windows.
- """
- rng=np.random.default_rng(seed)
- summaries=[]
- for h,g in frame.groupby("horizon_days",sort=True):
-  clusters=g[GROUP].astype(str).agg("::".join,axis=1)
-  tmp=g.assign(_cluster=clusters)
-  # Per-cluster sufficient statistics for both models.
-  rows=[]
-  for _,c in tmp.groupby("_cluster",sort=False):
-   y=c.actual.to_numpy(float)
-   b=np.maximum(c.baseline_prediction.to_numpy(float),0)
-   p=np.maximum(c.calibrated_prediction.to_numpy(float),0)
-   rows.append([
-    len(c), np.abs(y-b).sum(), np.abs(y-p).sum(),
-    ((y-b)**2).sum(), ((y-p)**2).sum(),
-    np.abs(y).sum(), y.sum(), (b-y).sum(), (p-y).sum(),
-    b.sum(), p.sum()
-   ])
-  a=np.asarray(rows,dtype=float)
-  n=len(a)
-  if n<2: raise RuntimeError(f"h={h}: need at least two store-product clusters")
-  # Metrics are computed from the same sampled clusters for a paired comparison.
-  draws=rng.integers(0,n,size=(reps,n))
-  vals=[]
-  for ix in draws:
-   z=a[ix].sum(axis=0)
-   count=max(z[0],1.0); denom=max(z[5],1e-9)
-   base_mae=z[1]/count; cal_mae=z[2]/count
-   base_rmse=np.sqrt(z[3]/count); cal_rmse=np.sqrt(z[4]/count)
-   base_wape=100*z[1]/denom; cal_wape=100*z[2]/denom
-   base_bias=100*z[7]/max(z[6],1e-9); cal_bias=100*z[8]/max(z[6],1e-9)
-   vals.append([
-    100*(base_mae-cal_mae)/max(base_mae,1e-9),
-    100*(base_rmse-cal_rmse)/max(base_rmse,1e-9),
-    base_wape-cal_wape,
-    cal_bias-base_bias
-   ])
-  v=np.asarray(vals)
-  point=score(g.actual,g.calibrated_prediction)
-  base=score(g.actual,g.baseline_prediction)
-  names=["mae_improvement_pct","rmse_improvement_pct","wape_improvement_pp","bias_change_pp"]
-  point_values=[
-   100*(base["mae"]-point["mae"])/max(base["mae"],1e-9),
-   100*(base["rmse"]-point["rmse"])/max(base["rmse"],1e-9),
-   base["wape_pct"]-point["wape_pct"],
-   point["bias_pct"]-base["bias_pct"]
-  ]
-  for j,name in enumerate(names):
-   summaries.append({"horizon_days":int(h),"comparison":"calibrated_vs_current_lightgbm",
-    "estimand":name,"point_estimate":float(point_values[j]),
-    "ci_95_lower":float(np.quantile(v[:,j],0.025)),
-    "ci_95_upper":float(np.quantile(v[:,j],0.975)),
-    "bootstrap_replicates":int(reps),"store_product_clusters":int(n)})
- return summaries
 
 def add_segments(frame):
  frame=frame.sort(GROUP+["date"])
