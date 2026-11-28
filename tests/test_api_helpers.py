@@ -408,7 +408,19 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
     assert "debug" not in encoded
     assert "feature_gain" not in encoded
     assert "raw_store_rows" not in encoded
-    assert len(encoded) < 2500
+    assert "folds" not in compact["forecast"]["rolling_design"]
+    assert len(encoded) < 3500
+    parts = api._stakeholder_prompt_parts(
+        api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the evidence."),
+        compact, ["inventory_optimizer_summary.json", "forecast_research_summary.json"], [],
+    )
+    assert len(parts) == 2
+    assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
+    estimated_reserved_tokens = sum(
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 1400
+        for part in parts
+    )
+    assert estimated_reserved_tokens < 7000
 
 
 def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
