@@ -240,6 +240,36 @@ def search_series(
         ],
     }
 
+@app.get("/api/v1/series/options")
+def series_options(store_id: str | None = None):
+    """Return compact dropdown choices; product IDs are scoped to the selected store."""
+    key = "quantile-model-artifacts/evaluation_quantile_predictions.csv"
+    df = _safe_csv(key)
+    df = _require_columns(df, key, {"store_id", "product_id"})
+    pairs = df[["store_id", "product_id"]].astype(str).drop_duplicates()
+
+    def identifier_key(value: str):
+        return (0, int(value)) if value.isdigit() else (1, value.casefold())
+
+    store_ids = sorted(pairs["store_id"].dropna().unique().tolist(), key=identifier_key)
+    if store_id is None or store_id == "":
+        product_ids = sorted(pairs["product_id"].dropna().unique().tolist(), key=identifier_key)
+    else:
+        selected = pairs[pairs["store_id"] == str(store_id)]
+        product_ids = sorted(selected["product_id"].dropna().unique().tolist(), key=identifier_key)
+    return {
+        "store_ids": store_ids,
+        "product_ids": product_ids,
+        "selected_store_id": str(store_id) if store_id is not None else None,
+    }
+
+
+@app.get("/api/v1/dataset-eda")
+def dataset_eda():
+    """Return the full source-dataset EDA report, including all original fields."""
+    return _safe_json("dataset-eda/full_dataset_eda.json")
+
+
 @app.get("/api/v1/model-metrics")
 def model_metrics():
     return _safe_json("model-artifacts/metrics.json")
