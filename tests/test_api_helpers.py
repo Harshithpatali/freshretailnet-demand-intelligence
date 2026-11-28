@@ -82,3 +82,60 @@ def test_small_demo_writes_reproducible_synthetic_artifacts(tmp_path):
     assert (tmp_path / "synthetic_forecasts.csv").exists()
     assert (tmp_path / "inventory_policy_results.csv").exists()
     assert (tmp_path / "demo_summary.json").exists()
+
+
+
+def test_overview_degrades_gracefully_when_one_artifact_is_missing(monkeypatch):
+    missing_key = "quantile-model-artifacts/quantile_metrics.json"
+
+    def read_artifact(key):
+        if key == missing_key:
+            raise HTTPException(status_code=503, detail="missing")
+        return {"source": key}
+
+    monkeypatch.setattr(api, "_safe_json", read_artifact)
+    result = api.overview()
+    assert result["point_forecast"]["source"] == "model-artifacts/metrics.json"
+    assert result["quantile_forecast"] == {}
+    assert result["artifact_status"]["point_forecast"]["available"] is True
+    assert result["artifact_status"]["quantile_forecast"]["available"] is False
+
+
+def test_filters_returns_compact_metadata_without_series_payload(monkeypatch):
+    frame = pd.DataFrame({
+        "store_id": ["s1", "s1", "s2"],
+        "product_id": ["p1", "p2", "p1"],
+        "date": ["2024-01-01", "2024-01-02", "2024-01-01"],
+    })
+    monkeypatch.setattr(api, "_safe_csv", lambda _key: frame)
+    result = api.filters()
+    assert result["series_count"] == 3
+    assert result["store_count"] == 2
+    assert result["product_count"] == 2
+    assert "series" not in result
+
+
+def test_series_search_filters_and_paginates_on_server(monkeypatch):
+    frame = pd.DataFrame({
+        "store_id": ["s1", "s1", "s2", "s3", "s3"],
+        "product_id": ["p1", "p2", "p1", "p1", "p3"],
+    })
+    monkeypatch.setattr(api, "_safe_csv", lambda _key: frame)
+    result = api.search_series(q="p1", offset=1, limit=1)
+    assert result["total"] == 3
+    assert result["rows"] == [{"store_id": "s2", "product_id": "p1"}]
+    assert result["offset"] == 1
+    assert result["limit"] == 1
+
+
+def test_json_safe_replaces_nan_and_infinity_with_null():
+    result = api._json_safe({
+        "nan": float("nan"),
+        "positive_inf": float("inf"),
+        "nested": [{"negative_inf": float("-inf"), "value": 3.0}],
+    })
+    assert result == {
+        "nan": None,
+        "positive_inf": None,
+        "nested": [{"negative_inf": None, "value": 3.0}],
+    }
