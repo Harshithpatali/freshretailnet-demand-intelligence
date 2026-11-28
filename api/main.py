@@ -971,7 +971,7 @@ def forecast_quality_monitoring_time_exposure(limit: int = Query(5000, ge=1, le=
 
 @app.post("/api/v1/stakeholder/brief")
 def generate_stakeholder_brief(request: StakeholderBriefRequest):
-    """Generate a detailed two-part stakeholder explanation using two bounded Groq calls."""
+    """Generate a detailed three-part stakeholder explanation using bounded Groq calls."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(

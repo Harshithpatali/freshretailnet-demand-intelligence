@@ -446,7 +446,7 @@ def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
 
 
 
-def test_stakeholder_brief_generates_two_sections_and_combines_them(monkeypatch):
+def test_stakeholder_brief_generates_three_sections_and_combines_them(monkeypatch):
     from types import SimpleNamespace
 
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
@@ -637,7 +637,7 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
     }
     evidence = api._compact_stakeholder_evidence(raw)
     encoded = __import__("json").dumps(evidence, separators=(",", ":"))
-    assert len(encoded) < 6800  # Combined evidence is intentionally split into two Groq calls.
+    assert len(encoded) < 6800  # Combined evidence is intentionally split into three Groq calls.
     parts = api._stakeholder_prompt_parts(
         api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the findings."),
         evidence, ["inventory_optimizer_summary.json", "forecast_research_summary.json"], [],
