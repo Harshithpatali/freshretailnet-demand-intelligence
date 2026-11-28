@@ -483,7 +483,6 @@ if active_page == "Optimized inventory engine":
                     metric("Expected simulated cost", f"{row['expected_total_cost']:,.2f}")
                 selected["capacity_label"] = selected["capacity_days"].astype(str) + " demand-days"
                 st.markdown("#### Selected scenario by store")
-                store_detail = get_json("/api/v1/inventory/optimization/scenarios")
                 st.caption(
                     f"Optimized {int(row['stores']):,} stores and "
                     f"{int(row['store_product_series']):,} store-product series across the selected configuration."
