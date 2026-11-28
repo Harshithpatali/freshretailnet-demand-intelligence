@@ -394,7 +394,7 @@ def _stakeholder_prompt_parts(
         "source_missing": any("inventory_optimizer_summary" in item for item in missing),
         "evidence": inventory_service,
         "instructions": (
-            "Write 70-90 words. Explain the 70-day population and five 7-day calibration plus "
+            "Write 100-120 words. Explain the 70-day population and five 7-day calibration plus "
             "five later evaluation windows. Define target fill, theoretical expected fill, empirical "
             "fill and cycle service level (CSL); explain percentage-point gaps and what they mean. "
             "Interpret the balanced scenario's cost and service metrics. Explicitly say costs are "
@@ -437,7 +437,7 @@ def _stakeholder_prompt_parts(
         "audience": audience,
         "evidence": forecast_metrics,
         "instructions": (
-            "Write 80-100 words. Define MAE, RMSE, WAPE and signed bias in plain language. Compare "
+            "Write 100-120 words. Define MAE, RMSE, WAPE and signed bias in plain language. Compare "
             "all supplied models on rolling and final-period metrics, explaining relative improvements. "
             "Explain Fourier/STL, spectral, wavelet, residual correction and ensemble methods. Lower "
             "error is better; bias near zero is preferable. Forecast accuracy is not business savings. "
@@ -1030,7 +1030,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         parts = _stakeholder_prompt_parts(request, evidence, sources, missing)
         system_message = _stakeholder_system_prompt()
         max_prompt_characters = 5_000
-        max_completion_tokens = 300
+        max_completion_tokens = 500
         prompt_sizes = [
             len(system_message) + len(part["user_message"])
             for part in parts
