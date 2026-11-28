@@ -53,6 +53,7 @@ jobs:
           BACKTEST_DATASET_LABEL: FreshRetailNet-LT-v1.0
           ROLLING_FOLDS: "5"
           ROLLING_BLOCK_DAYS: "14"
+          BACKTEST_SERIES_LIMIT: "3000"
         run: python -u experiments/demand_intelligence/segment_rolling_backtest.py
       - name: Calculate paired 500-replicate cluster-bootstrap intervals
         env:
