@@ -89,6 +89,14 @@ def _sql_path(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/").replace("'", "''")
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _records(connection: duckdb.DuckDBPyConnection, sql: str) -> list[dict[str, Any]]:
     cursor = connection.execute(sql)
     names = [column[0] for column in cursor.description]
@@ -441,7 +449,7 @@ def main() -> None:
             path = root / f"{split}.parquet"
             print(f"Downloading s3://{bucket}/{key}")
             s3.download_file(bucket, key, str(path))
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            digest = _sha256_file(path)
             input_hashes[split] = digest
             local_paths[split] = path
 
