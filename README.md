@@ -36,14 +36,14 @@ flowchart TD
 |---|---|
 | `scripts/ingest_freshretailnet_to_r2.py` | Download, checksum-verify, and upload source Parquet |
 | `scripts/profile_and_process_r2.py` | Profile and re-encode R2 data |
-| `scripts/stockout_diagnostics.py` | Stockout-exposure diagnostics |
+| `scripts/stockout_diagnostics.py` | Stockout-exposure diagnostics |\n| `scripts/optimized_inventory_decision_engine.py` | Service-level and capacity-constrained store replenishment |
 | `scripts/sql_eda.py` | DuckDB SQL exploratory analysis |
 | `scripts/full_dataset_eda.py` | Complete EDA across all 19 original source fields and both splits |
 | `src/train_model.py` | Point-forecast feature engineering and LightGBM training |
 | `src/train_quantile_models.py` | P10/P50/P90 forecasting and conformal interval adjustment |
-| `src/simulate_inventory.py` | Inventory policy simulation from held-out forecast rows |
+| `src/simulate_inventory.py` | Inventory policy simulation from held-out forecast rows |\n| `src/inventory_optimizer.py` | Store-level service-constrained mixed-integer replenishment optimizer |
 | `experiments/demand_intelligence/` | Demand segmentation and multi-window challenger experiments |
-| `experiments/wavelet/` | Wavelet feature experiments and comparisons |
+| `experiments/wavelet/` | Wavelet feature experiments and comparisons |\n| `experiments/forecast_research/` | STL, Fourier, spectral, wavelet-ablation, residual-correction and ensemble benchmark |
 | `api/main.py` | Read-only FastAPI artifact endpoints |
 | `dashboard/app.py` | Streamlit dashboard |
 | `docs/` | Ingestion, R2 processing, and deployment instructions |
@@ -154,6 +154,37 @@ The successful [five-fold run #46124737202](https://github.com/Harshithpatali/fr
 H7/H14 also improve pooled RMSE and WAPE with 95% cluster-bootstrap intervals excluding zero. H1 is inconclusive on MAE, and calibrated RMSE worsens by 0.399%. Keep the baseline at H1 and treat H7/H14 as challengers pending a later untouched time window. These intervals measure cross-sectional store-product uncertainty conditional on the five windows, not future temporal uncertainty. See the [full five-fold report](docs/results/segment_rolling_backtest.md) and [expanded experiment summary](docs/results/experiment_summary.csv).
 
 Each report identifies its workflow run, evaluation period, sample size and limitations. Re-run the workflows after changing data or code and publish a new dated report rather than silently replacing historical results. Do not compare the separate multi-horizon segment experiments with the production one-day-ahead model as if they were the same task.
+
+## Advanced inventory optimization and forecasting research
+
+The repository now includes two additional reproducible research workflows. See
+[Advanced Inventory and Forecast Research](docs/ADVANCED_INVENTORY_AND_FORECAST_RESEARCH.md)
+for methods, equations, assumptions, output paths and limitations.
+
+- **Service-Level Inventory Decision Optimization:** solves a store-by-store
+  multiple-choice MILP that minimizes expected holding, shortage and ordering costs
+  subject to a store-wide expected fill-rate target, storage capacity, replenishment
+  capacity, SKU maximum orders, MOQ and pack-size constraints. When an SLA is
+  infeasible, the solver maximizes expected fulfilled demand under the same capacities
+  and explicitly reports the service gap. It calibrates seven-day demand distributions
+  from the first five non-overlapping windows of the external FreshRetailNet-LT H1
+  rolling predictions and evaluates decisions on five later disjoint windows.
+- **Forecast Research Benchmark:** compares the existing LightGBM baseline with
+  Fourier/STL, spectral diagnostics, causal wavelet features, validation-trained
+  residual correction and a non-negative ensemble whose weights are selected on
+  validation predictions. It reports three expanding rolling windows, fold metrics,
+  a wavelet ablation and paired store-product/date-block bootstrap uncertainty.
+
+The inventory optimizer uses a separate FreshRetailNet-LT external population; its
+results must not be pooled with FreshRetailNet-50K metrics. The forecasting research
+workflow samples up to 3,000 deterministic store-product series. Its final comparison
+uses the repository's previously used seven-day evaluation split, so it is not a new
+untouched production-promotion result. Both projects use observed sales, which can be
+censored by stockouts, and illustrative cost/pack/capacity assumptions.
+
+Dashboard pages are available under **Inventory decisions → Service-level optimizer**
+and **Experiments → Forecast research benchmark** after the corresponding workflows
+successfully publish their R2 artifacts.
 
 ## Run locally
 
