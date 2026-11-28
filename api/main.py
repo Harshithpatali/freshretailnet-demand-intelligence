@@ -1009,10 +1009,13 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
                 detail={
                     "code": "stakeholder_prompt_too_large",
                     "message": (
-                        "The two-part stakeholder briefing exceeds the safe Groq request budget. "
-                        f"Part sizes: {prompt_sizes}; estimated reserved tokens: "
-                        f"{estimated_reserved_tokens:,}."
+                        "The two-part stakeholder briefing exceeds the safe limit of "
+                        f"{max_prompt_characters:,} characters per section or the estimated "
+                        f"Groq token budget. Part sizes: {prompt_sizes}; estimated reserved "
+                        f"tokens: {estimated_reserved_tokens:,}."
                     ),
+                    "prompt_characters": max(prompt_sizes, default=0),
+                    "maximum_prompt_characters": max_prompt_characters,
                     "prompt_characters_by_part": prompt_sizes,
                     "maximum_prompt_characters_per_part": max_prompt_characters,
                     "estimated_reserved_tokens": estimated_reserved_tokens,
