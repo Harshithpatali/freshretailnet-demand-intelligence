@@ -56,6 +56,15 @@ def _require_columns(frame: pd.DataFrame, key: str, required: set[str]) -> pd.Da
         )
     return frame
 
+def _require_columns(frame: pd.DataFrame, key: str, required: set[str]) -> pd.DataFrame:
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Artifact schema mismatch: {key} is missing columns {missing}. Republish the artifact.",
+        )
+    return frame
+
 @app.get("/health")
 def health():
     configured = all(os.getenv(k) for k in ("R2_ACCOUNT_ID","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY","R2_BUCKET"))
@@ -94,7 +103,8 @@ def inventory():
 def inventory_series(policy: str | None = None, store_id: str | None = None,
                      product_id: str | None = None, limit: int = Query(500, ge=1, le=5000)):
     df = _safe_csv("inventory-simulation-artifacts/inventory_simulation_by_series.csv")
-    df = _require_columns(df, "inventory-simulation-artifacts/inventory_simulation_by_series.csv", {"policy", "store_id", "product_id"})\n    for col, value in (("policy", policy), ("store_id", store_id), ("product_id", product_id)):
+    df = _require_columns(df, "inventory-simulation-artifacts/inventory_simulation_by_series.csv", {"policy", "store_id", "product_id"})\n    df = _require_columns(df, "inventory-simulation-artifacts/inventory_simulation_by_series.csv", {"policy", "store_id", "product_id"})
+    for col, value in (("policy", policy), ("store_id", store_id), ("product_id", product_id)):
         if value is not None:
             df = df[df[col].astype(str) == value]
     return {"total": int(len(df)), "rows": df.head(limit).replace({float("nan"): None}).to_dict(orient="records")}
@@ -108,6 +118,7 @@ def forecasts(store_id: str | None = None, product_id: str | None = None,
               date_from: str | None = None, date_to: str | None = None,
               limit: int = Query(1000, ge=1, le=10000)):
     df = _safe_csv("quantile-model-artifacts/evaluation_quantile_predictions.csv")
+    df = _require_columns(df, "quantile-model-artifacts/evaluation_quantile_predictions.csv", {"store_id", "product_id", "date"})
     if store_id is not None:
         df = df[df["store_id"].astype(str) == store_id]
     if product_id is not None:
@@ -122,7 +133,8 @@ def forecasts(store_id: str | None = None, product_id: str | None = None,
 @app.get("/api/v1/filters")
 def filters():
     df = _safe_csv("quantile-model-artifacts/evaluation_quantile_predictions.csv")
-    df = _require_columns(df, "quantile-model-artifacts/evaluation_quantile_predictions.csv", {"store_id", "product_id", "date"})\n    pairs = df[["store_id", "product_id"]].astype(str).drop_duplicates().sort_values(["store_id", "product_id"])
+    df = _require_columns(df, "quantile-model-artifacts/evaluation_quantile_predictions.csv", {"store_id", "product_id", "date"})\n    df = _require_columns(df, "quantile-model-artifacts/evaluation_quantile_predictions.csv", {"store_id", "product_id", "date"})
+    pairs = df[["store_id", "product_id"]].astype(str).drop_duplicates().sort_values(["store_id", "product_id"])
     return {"stores": sorted(df["store_id"].astype(str).unique().tolist()),
             "products": sorted(df["product_id"].astype(str).unique().tolist()),
             "series": [{"store_id": r.store_id, "product_id": r.product_id} for r in pairs.itertuples(index=False)],
