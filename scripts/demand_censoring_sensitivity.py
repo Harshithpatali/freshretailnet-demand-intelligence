@@ -245,8 +245,34 @@ def main():
             )
             .reset_index()
         )
+        output_keys = [
+            "diagnostics/demand-censoring/demand_censoring_sensitivity_daily.csv",
+            "diagnostics/demand-censoring/demand_censoring_sensitivity_by_bucket.csv",
+            "diagnostics/demand-censoring/demand_censoring_reconstruction_validation_by_hour.csv",
+            "diagnostics/demand-censoring/demand_censoring_sensitivity.json",
+        ]
+        configuration = {
+            "stock_status_encoding": {"0": "available", "1": "out_of_stock"},
+            "encoding_validation": "status code 1 count in hourly indices 6..21 reconciled exactly to stock_hour6_22_cnt",
+            "rate_estimator": "training-only mean hourly sales by store-product-hour with global-hour fallback",
+            "pseudo_censoring_validation": "out-of-time evaluation hours known to be in stock",
+            "sensitivity_multipliers": {"lower": 0.5, "central": 1.0, "upper": 1.5},
+        }
+        provenance = build_provenance(
+            "Demand Censoring Reconstruction Validation",
+            {"raw/train.parquet": train_path, "raw/eval.parquet": eval_path},
+            str(evaluation["dt"].min()), str(evaluation["dt"].max()),
+            configuration, outputs=output_keys,
+        )
         summary = {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "provenance": provenance,
+            "reconstruction_validation": reconstruction_validation,
+            "stock_status_encoding_reconciliation": {
+                "encoding": configuration["stock_status_encoding"],
+                "validated_against": "stock_hour6_22_cnt",
+                "result": "all train and evaluation daily rows reconciled exactly",
+            },
             "reference_split": "raw/train.parquet, in-stock hourly observations only",
             "evaluation_split": "raw/eval.parquet",
             "evaluation_rows": int(len(daily)),
@@ -257,6 +283,7 @@ def main():
             "stockout_affected_row_rate_pct": float(100 * (daily["stockout_hours_06_21"] > 0).mean()),
             "global_fallback_stockout_slots": int(daily["global_fallback_stockout_slots"].sum()),
             "sensitivity_multipliers": {"lower": 0.5, "central": 1.0, "upper": 1.5},
+            "estimate_label": "assumption-driven stockout-hour rate-imputation sensitivity proxy; not lost sales",
             "interpretation": (
                 "Counterfactual sales are sensitivity scenarios, not identified demand. "
                 "The central proxy imputes each out-of-stock hour using the historical "
@@ -274,21 +301,28 @@ def main():
         }
         daily_path = root / "demand_censoring_sensitivity_daily.csv"
         bucket_path = root / "demand_censoring_sensitivity_by_bucket.csv"
+        validation_path = root / "demand_censoring_reconstruction_validation_by_hour.csv"
         summary_path = root / "demand_censoring_sensitivity.json"
         daily.to_csv(daily_path, index=False)
         bucket_summary.to_csv(bucket_path, index=False)
+        validation_by_hour.to_csv(validation_path, index=False)
         summary_path.write_text(json.dumps(summary, indent=2, default=str))
         uploads = [
-            (daily_path, "diagnostics/demand-censoring/demand_censoring_sensitivity_daily.csv", "text/csv"),
-            (bucket_path, "diagnostics/demand-censoring/demand_censoring_sensitivity_by_bucket.csv", "text/csv"),
-            (summary_path, "diagnostics/demand-censoring/demand_censoring_sensitivity.json", "application/json"),
+            (daily_path, output_keys[0], "text/csv"),
+            (bucket_path, output_keys[1], "text/csv"),
+            (validation_path, output_keys[2], "text/csv"),
+            (summary_path, output_keys[3], "application/json"),
         ]
         for path, key, content_type in uploads:
-            s3.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": content_type})
-            size = s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
-            if size != path.stat().st_size:
-                raise RuntimeError(f"R2 verification failed for {key}")
-            print(f"Verified s3://{bucket}/{key} ({size:,} bytes)")
+            destinations = upload_versioned_artifact(s3, bucket, path, key, content_type, provenance)
+            print(f"Published stable and immutable copies: {destinations[0]} ; {destinations[1]}")
+        manifest_path = root / "demand_censoring_manifest.json"
+        manifest_path.write_text(json.dumps(provenance, indent=2, sort_keys=True))
+        upload_versioned_artifact(
+            s3, bucket, manifest_path,
+            "diagnostics/demand-censoring/demand_censoring_manifest.json",
+            "application/json", provenance,
+        )
         print(json.dumps(summary, indent=2))
 
 
