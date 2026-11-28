@@ -171,36 +171,60 @@ with tabs[1]:
         filters = None
         st.warning(f"Forecast filters are unavailable: {exc}")
     chosen = select_store_product("forecast") if filters else None
-    start = st.text_input("Start date (YYYY-MM-DD)", filters["dates"]["start"] if filters else "")
-    end = st.text_input("End date (YYYY-MM-DD)", filters["dates"]["end"] if filters else "")
-    params = {"limit":10000, "date_from":start, "date_to":end}
-    if chosen:
-        params["store_id"] = chosen["store_id"]
-        params["product_id"] = chosen["product_id"]
-    try:
-        if not filters:
-            raise RuntimeError("Forecast filter artifact is unavailable; republish quantile predictions.")
-        data = get_json("/api/v1/forecasts", params)
-        f = pd.DataFrame(data["rows"])
-        if f.empty:
-            st.warning("No rows match this series and date range.")
-        else:
-            f["date"] = pd.to_datetime(f["date"])
-            f = f.sort_values("date")
-            st.caption(f'Showing {len(f):,} of {data["total"]:,} matching rows.')
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=f["date"], y=f["p90_calibrated"], mode="lines", line={"width":0}, name="Calibrated upper", showlegend=False))
-            fig.add_trace(go.Scatter(x=f["date"], y=f["p10_calibrated"], mode="lines", line={"width":0}, fill="tonexty", fillcolor="rgba(31,119,180,0.18)", name="Calibrated P10–P90 band"))
-            fig.add_trace(go.Scatter(x=f["date"], y=f["actual_sale_amount"], mode="lines+markers", name="Observed sales"))
-            fig.add_trace(go.Scatter(x=f["date"], y=f["p50"], mode="lines+markers", name="P50 forecast"))
-            fig.update_layout(title="Observed sales, median forecast and calibrated interval",
-                              xaxis_title="Date", yaxis_title="Daily observed sales units",
-                              height=420, margin={"l":15,"r":15,"t":55,"b":15}, legend={"orientation":"h","y":-0.25})
-            st.plotly_chart(fig, use_container_width=True)
-            display_cols = [c for c in ["date","actual_sale_amount","p10","p50","p90","p10_calibrated","p90_calibrated","stock_hour6_22_cnt"] if c in f]
-            compact_table(f[display_cols], 300)
-    except Exception as exc:
-        st.error(f"Forecast query failed: {exc}")
+    if not chosen:
+        st.info("Select a store and product above to view one series at a time.")
+    else:
+        start = st.text_input("Start date (YYYY-MM-DD)", filters["dates"]["start"] if filters else "")
+        end = st.text_input("End date (YYYY-MM-DD)", filters["dates"]["end"] if filters else "")
+        params = {
+            "limit": 10000, "date_from": start, "date_to": end,
+            "store_id": chosen["store_id"], "product_id": chosen["product_id"],
+        }
+        try:
+            if not filters:
+                raise RuntimeError("Forecast filter artifact is unavailable; republish quantile predictions.")
+            data = get_json("/api/v1/forecasts", params)
+            f = pd.DataFrame(data["rows"])
+            if f.empty:
+                st.warning("No observations match this store, product and date range.")
+            else:
+                f["date"] = pd.to_datetime(f["date"])
+                f = f.sort_values("date")
+                st.caption(f'Showing {len(f):,} of {data["total"]:,} observations for Store {chosen["store_id"]} · Product {chosen["product_id"]}.')
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=f["date"], y=f["p90_calibrated"], mode="lines",
+                    line={"width": 0}, name="Calibrated upper", showlegend=False,
+                ))
+                fig.add_trace(go.Scatter(
+                    x=f["date"], y=f["p10_calibrated"], mode="lines",
+                    line={"width": 0}, fill="tonexty",
+                    fillcolor="rgba(31,119,180,0.18)", name="Calibrated P10–P90 band",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=f["date"], y=f["actual_sale_amount"], mode="lines+markers",
+                    name="Observed sales",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=f["date"], y=f["p50"], mode="lines+markers", name="P50 forecast",
+                ))
+                fig.update_layout(
+                    title="Observed sales, median forecast and calibrated interval",
+                    xaxis_title="Date", yaxis_title="Normalized daily observed sales",
+                    height=420, margin={"l": 15, "r": 15, "t": 55, "b": 15},
+                    legend={"orientation": "h", "y": -0.25},
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                display_cols = [
+                    c for c in [
+                        "date", "actual_sale_amount", "p10", "p50", "p90",
+                        "p10_calibrated", "p90_calibrated", "stock_hour6_22_cnt",
+                    ] if c in f
+                ]
+                compact_table(f[display_cols], 300)
+        except Exception as exc:
+            st.error(f"Forecast query failed: {exc}")
+
 
 with tabs[2]:
     st.subheader("Probabilistic forecast quality")
@@ -747,6 +771,16 @@ with tabs[6]:
         exp_filters = {}
         st.warning(f"Experiment inputs are unavailable: {exc}")
     exp_chosen = select_store_product("experiment") if exp_filters else None
+    if exp_chosen:
+        selected_series_key = f"{exp_chosen['store_id']}::{exp_chosen['product_id']}"
+        if st.session_state.get("freshretail_experiment_series_key") != selected_series_key:
+            for state_key in (
+                "freshretail_last_experiment",
+                "freshretail_last_experiment_curves",
+                "freshretail_last_experiment_config",
+            ):
+                st.session_state.pop(state_key, None)
+            st.session_state["freshretail_experiment_series_key"] = selected_series_key
     if not exp_chosen:
         st.info("Choose a store and product above to configure an inventory experiment.")
     else:
