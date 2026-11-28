@@ -163,14 +163,14 @@ def load_deterministic_panel(s3, bucket: str, root: Path):
 
 
 def _fourier(date_value: pd.Timestamp) -> dict[str, float]:
-    day_of_week = int(date_value.dayofweek)
+    day_of_week = int(date_value.day_of_week)
     row = {}
     for harmonic in (1, 2, 3):
         angle = 2.0 * np.pi * harmonic * day_of_week / 7.0
         row[f"fourier_week_sin_{harmonic}"] = float(np.sin(angle))
         row[f"fourier_week_cos_{harmonic}"] = float(np.cos(angle))
-    month_angle = 2.0 * np.pi * (date_value.dayofyear - 1) / 30.4375
-    year_angle = 2.0 * np.pi * (date_value.dayofyear - 1) / 365.25
+    month_angle = 2.0 * np.pi * (date_value.day_of_year - 1) / 30.4375
+    year_angle = 2.0 * np.pi * (date_value.day_of_year - 1) / 365.25
     row["fourier_month_sin"] = float(np.sin(month_angle))
     row["fourier_month_cos"] = float(np.cos(month_angle))
     row["fourier_year_sin"] = float(np.sin(year_angle))
@@ -248,7 +248,7 @@ def origin_features(
                 trend = np.asarray(decomposition.trend, dtype=float)
                 seasonal = np.asarray(decomposition.seasonal, dtype=float)
                 residual = np.asarray(decomposition.resid, dtype=float)
-                hist_weekdays = pd.to_datetime(hist_dates).dayofweek.to_numpy()
+                hist_weekdays = pd.to_datetime(hist_dates).day_of_week.to_numpy()
                 for weekday in range(7):
                     select = hist_weekdays[-28:] == weekday
                     seasonal_by_weekday[weekday] = (
@@ -285,7 +285,7 @@ def origin_features(
                 "stl_residual_mean_14": residual_mean,
                 "stl_residual_std_28": residual_std,
                 "stl_residual_last": residual_last,
-                "stl_seasonal_for_weekday": float(seasonal_by_weekday[target_date.dayofweek]),
+                "stl_seasonal_for_weekday": float(seasonal_by_weekday[target_date.day_of_week]),
                 "stl_days_since_origin": float((target_date - origin_date).days),
                 "stl_fit_available": stl_ok,
                 **spectral,
