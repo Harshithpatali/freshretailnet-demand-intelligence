@@ -1,0 +1,40 @@
+name: Advanced Time-Series Research Benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "experiments/time_series/research_benchmark.py"
+      - "experiments/wavelet/features.py"
+      - "src/train_model.py"
+      - ".github/workflows/time-series-research-benchmark.yml"
+      - "scripts/artifact_provenance.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: time-series-research-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  time-series-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install modelling, decomposition and storage dependencies
+        run: python -m pip install --upgrade boto3 polars pyarrow pandas numpy scipy scikit-learn lightgbm statsmodels PyWavelets
+      - name: Compile research benchmark
+        run: python -m py_compile experiments/time_series/research_benchmark.py experiments/wavelet/features.py
+      - name: Run STL, Fourier, spectral, wavelet ablation, residual and ensemble benchmark
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python -u experiments/time_series/research_benchmark.py
