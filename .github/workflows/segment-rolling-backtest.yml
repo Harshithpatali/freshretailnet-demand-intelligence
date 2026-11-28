@@ -9,6 +9,10 @@ on:
       - "src/train_model.py"
       - ".github/workflows/segment-rolling-backtest.yml"
 
+concurrency:
+  group: segment-rolling-backtest-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
