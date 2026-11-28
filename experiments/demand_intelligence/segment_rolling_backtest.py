@@ -341,6 +341,7 @@ def main():
     "baseline_rmse":base["rmse"],"selected_rmse":selected["rmse"],
     "baseline_wape_pct":base["wape_pct"],"selected_wape_pct":selected["wape_pct"]
    })
+  uncertainty=[]  # populated by the separate post-hoc bootstrap workflow
   report={"experiment":"multi-window rolling backtest with validation-gated segment specialists",
    "fold_design":{"folds":FOLDS,"configured_test_block_days":BLOCK_DAYS,"validation_block_days":BLOCK_DAYS,
     "training":"expanding chronological history","test_windows_disjoint":True,"effective_test_block_days_by_horizon":{str(h):next(a["test_dates"] for a in audits if a["horizon_days"]==h and a["fold"]==1) for h in HORIZONS}},
