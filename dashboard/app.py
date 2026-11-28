@@ -1293,6 +1293,26 @@ if active_page == "Forecast research benchmark":
                     })
             compact_table(pd.DataFrame(rows), 320)
 
+        wavelet_ablation = final_design.get("wavelet_ablation_vs_spectral", {})
+        ablation_metrics = wavelet_ablation.get("comparisons_vs_baseline", {}).get("wavelet", {})
+        if ablation_metrics:
+            st.markdown("#### Direct wavelet feature ablation: wavelet vs spectral-only")
+            ablation_rows = []
+            for metric_name, result in ablation_metrics.items():
+                ablation_rows.append({
+                    "Metric": metric_name.upper(),
+                    "Mean improvement (%)": result.get("mean_improvement_pct"),
+                    "95% CI low (%)": result.get("ci_95_low_pct"),
+                    "95% CI high (%)": result.get("ci_95_high_pct"),
+                    "Probability of improvement": result.get("probability_improvement"),
+                    "CI excludes zero": result.get("ci_excludes_zero"),
+                })
+            compact_table(pd.DataFrame(ablation_rows), 200)
+            st.caption(
+                "Positive improvement means the wavelet-augmented model beats the spectral-only model. "
+                "Intervals use paired store-product clusters and contiguous two-day date blocks."
+            )
+
         st.caption(
             "Interpretation: Fourier and STL features are fixed-origin and history-only; "
             "wavelet inputs are trailing and causal; ensemble weights are frozen from validation. "
