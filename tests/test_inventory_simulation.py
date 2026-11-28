@@ -1,6 +1,14 @@
 """Regression tests for the inventory simulator's core accounting behavior."""
+import sys
+from pathlib import Path
+
 import pandas as pd
 import pytest
+
+# Make imports deterministic when pytest is launched from a nested working directory.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.simulate_inventory import simulate
 
