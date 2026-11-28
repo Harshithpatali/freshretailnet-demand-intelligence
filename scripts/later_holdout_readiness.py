@@ -34,17 +34,17 @@ def validate_later_holdout(base_eval_max: str, base_series: int, later: pl.DataF
     if missing:
         raise ValueError(f"Later holdout missing required columns: {sorted(missing)}")
     dates = sorted(later.select(pl.col("dt").str.to_date(strict=False).unique()).to_series().to_list())
+    latest_base = datetime.strptime(base_eval_max, "%Y-%m-%d").date()
+    if dates and dates[0] <= latest_base:
+        raise ValueError(
+            f"Later holdout starts {dates[0]}, which is not strictly after the benchmark "
+            f"evaluation end {latest_base}"
+        )
     if len(dates) < MIN_HOLDOUT_DAYS:
         raise ValueError(
             f"Later holdout has {len(dates)} unique dates; at least {MIN_HOLDOUT_DAYS} are required"
         )
-    latest_base = datetime.strptime(base_eval_max, "%Y-%m-%d").date()
     first_later = dates[0]
-    if first_later <= latest_base:
-        raise ValueError(
-            f"Later holdout starts {first_later}, which is not strictly after the benchmark "
-            f"evaluation end {latest_base}"
-        )
     duplicate_rows = later.select(
         pl.struct(["store_id", "product_id", "dt"]).is_duplicated().sum()
     ).item()
