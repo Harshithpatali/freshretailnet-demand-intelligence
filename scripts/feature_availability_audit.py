@@ -20,7 +20,7 @@ def target_calendar_feature_audit(dataset_columns) -> dict:
         "dataset_target_date_flags_excluded": present,
         "excluded_reason": (
             "The dataset card defines these as holiday/activity indicators but does not "
-            "document when they are published relative to the forecast issue time. "
+            "document their publication time relative to the forecast issue time. "
             "They are therefore not admitted as future covariates without an operational feed/SLA."
         ),
         "forecast_time_availability": {
