@@ -469,7 +469,7 @@ with tabs[9]:
         c1, c2, c3 = st.columns(3)
         with c1: metric("Evaluation rows", f"{censoring.get('evaluation_rows', 0):,}")
         with c2: metric("Stockout-affected rows", f"{censoring.get('stockout_affected_row_rate_pct', float('nan')):.1f}%")
-        with c3: metric("Central missed-sales proxy", f"{censoring.get('expected_lost_sales_proxy_units', 0):,.1f}")
+        with c3: metric("Central imputation proxy", f"{censoring.get('expected_lost_sales_proxy_units', 0):,.1f}")
         st.caption(f"Evaluation period: {censoring.get('evaluation_start')} to {censoring.get('evaluation_end')}")
         st.info(censoring.get("interpretation", "Sensitivity assumptions only."))
         try:
