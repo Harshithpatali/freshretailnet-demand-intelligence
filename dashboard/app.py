@@ -413,14 +413,18 @@ with tabs[8]:
             if not daily_df.empty:
                 daily_df["date"] = pd.to_datetime(daily_df["date"])
                 st.markdown("#### Daily forecast error and interval coverage")
-                daily_long = daily_df.melt(
-                    id_vars=["date"], value_vars=["mae", "calibrated_coverage_pct"],
-                    var_name="metric", value_name="value"
-                )
-                daily_fig = px.line(daily_long, x="date", y="value", color="metric",
-                                    markers=True, title="Daily MAE and calibrated coverage")
-                daily_fig.update_layout(height=360)
-                st.plotly_chart(daily_fig, use_container_width=True)
+                left_metric, right_metric = st.columns(2)
+                with left_metric:
+                    mae_fig = px.line(daily_df, x="date", y="mae", markers=True,
+                                      title="Daily P50 MAE")
+                    mae_fig.update_layout(height=330, yaxis_title="Observed-sales units")
+                    st.plotly_chart(mae_fig, use_container_width=True)
+                with right_metric:
+                    coverage_fig = px.line(daily_df, x="date", y="calibrated_coverage_pct",
+                                            markers=True, title="Daily calibrated P10–P90 coverage")
+                    coverage_fig.add_hline(y=80, line_dash="dash", annotation_text="80% nominal")
+                    coverage_fig.update_layout(height=330, yaxis_title="Coverage (%)")
+                    st.plotly_chart(coverage_fig, use_container_width=True)
                 compact_table(daily_df, 260)
         except Exception as exc:
             st.info(f"Daily metrics are not available yet: {exc}")
