@@ -163,7 +163,8 @@ def predict_frame(model, frame, features, cats):
   x[col]=pd.Categorical(values,categories=levels)
  return model.predict(x,num_iteration=model.best_iteration)
 
-def predict_specialist(tr,va,ev,features,cats,seg):
+def fit_predict_specialist_pair(tr,va,ev,features,cats,seg):
+ """Fit each specialist once, then return predictions for validation and test."""
  if seg in ("lumpy","intermittent"):
   cls=fit_model(tr,va,features,cats,binary=True)
   pos=tr[tr.target>0]
@@ -174,9 +175,12 @@ def predict_specialist(tr,va,ev,features,cats,seg):
     f"validation_positive={len(pos_va)}"
    )
   reg=fit_model(pos,pos_va,features,cats)
-  return np.maximum(predict_frame(cls,ev,features,cats),0)*np.maximum(predict_frame(reg,ev,features,cats),0)
+  val_pred=np.maximum(predict_frame(cls,va,features,cats),0)*np.maximum(predict_frame(reg,va,features,cats),0)
+  test_pred=np.maximum(predict_frame(cls,ev,features,cats),0)*np.maximum(predict_frame(reg,ev,features,cats),0)
+  return val_pred,test_pred
  model=fit_model(tr,va,features,cats,objective="huber" if seg=="erratic" else "regression")
- return np.maximum(predict_frame(model,ev,features,cats),0)
+ return (np.maximum(predict_frame(model,va,features,cats),0),
+         np.maximum(predict_frame(model,ev,features,cats),0))
 
 def main():
  s3,bucket=client(),env("R2_BUCKET")
@@ -285,7 +289,7 @@ def main():
       continue
      # Baseline segment score and challenger validation score are calculated on the same rows.
      bval=np.maximum(predict_frame(baseline,va_s,basefeat,cats),0)
-     sp_val=predict_specialist(tr_s,va_s,va_s,allfeat,cats,seg)
+     sp_val,sp_test=fit_predict_specialist_pair(tr_s,va_s,ev_s,allfeat,cats,seg)
      bmae=score(va_s.target,bval)["mae"]; smae=score(va_s.target,sp_val)["mae"]
      gain=100*(bmae-smae)/max(bmae,1e-9)
      chosen=gain>=MIN_VALIDATION_GAIN_PCT
@@ -295,7 +299,7 @@ def main():
      current_fold_selected[seg]=bool(chosen)
      if chosen:
       specialist_val_predictions[seg]=sp_val
-      specialist_test_predictions[seg]=predict_specialist(tr_s,va_s,ev_s,allfeat,cats,seg)
+      specialist_test_predictions[seg]=sp_test
     # Prospective gate: two completed validation wins among the latest three.
     # No test outcome is used to enable, disable, or select a specialist.
     for seg,selected_now in current_fold_selected.items():
@@ -355,7 +359,7 @@ def main():
   values=pdf[["actual","baseline_prediction","selected_prediction","calibrated_prediction"]].to_numpy(dtype=float)
   if not np.isfinite(values).all():
    raise RuntimeError("Non-finite actuals or predictions found; refusing to publish metrics")
-  uncertainty=paired_cluster_bootstrap(pdf)
+  # Confidence intervals are calculated in a separate post-hoc job from this saved artifact.\n  uncertainty=[]
   pooled=[]
   for h,g in pdf.groupby("horizon_days",sort=True):
    observed_folds=set(g["fold"].astype(int).unique())
@@ -403,7 +407,7 @@ def main():
    "calendar_features":target_cal_cols,"calendar_policy":"Only explicitly named target-date calendar flags are specialist-only; original origin-date flags remain in the production baseline. Verify target flags are available before forecast time.",
    "calibration_policy":{"method":"segment-wise multiplicative ratio calibration","fit_data":"current fold validation block only, using the validation-routed model","shrinkage_prior_rows":CALIBRATION_PRIOR_ROWS,"factor_clip":[CALIBRATION_MIN_FACTOR,CALIBRATION_MAX_FACTOR],"test_isolation":"test targets are never used to estimate correction factors"},
    "caveats":"Calibration factors are estimated from each fold's validation predictions and shrunk toward 1. They are not fitted on test outcomes. Compare calibrated MAE, RMSE, WAPE and bias against the uncalibrated gated challenger; calibration may reduce bias while worsening MAE. Confirm on a later live period before production promotion.",
-   "uncertainty_methodology":"Paired store-product cluster bootstrap, 500 replicates, resampling each entity with all its held-out dates/folds intact. This captures cross-sectional cluster uncertainty but not uncertainty from future time-window shifts; inspect fold-level results separately.",
+   "uncertainty_methodology":"Computed by the separate post-hoc paired cluster bootstrap workflow after predictions are saved; no intervals are computed in the model-training job.",
    "generated_at_utc":datetime.now(timezone.utc).isoformat()}
   # A compact paired comparison table makes the uncertainty and evaluation
   # sample sizes visible without requiring consumers to parse the full JSON.
@@ -420,21 +424,21 @@ def main():
     ("bias_change_pp",challenger["bias_pct"]-base["bias_pct"]),
    ]
    for metric_name,point in metrics:
-    ci=uncertainty_lookup[(int(h),metric_name)]
+    ci=uncertainty_lookup.get((int(h),metric_name))
     comparison_rows.append({"horizon_days":int(h),"comparison":"calibrated_specialists_vs_current_lightgbm",
      "metric":metric_name,"baseline_value":base[{"mae_improvement_pct":"mae","rmse_improvement_pct":"rmse",
        "wape_improvement_pp":"wape_pct","bias_change_pp":"bias_pct"}[metric_name]],
      "challenger_value":challenger[{"mae_improvement_pct":"mae","rmse_improvement_pct":"rmse",
        "wape_improvement_pp":"wape_pct","bias_change_pp":"bias_pct"}[metric_name]],
-     "improvement_point_estimate":point,"ci_95_lower":ci["ci_95_lower"],
-     "ci_95_upper":ci["ci_95_upper"],"evaluation_rows":int(len(g)),
+     "improvement_point_estimate":point,"ci_95_lower":ci["ci_95_lower"] if ci else None,
+     "ci_95_upper":ci["ci_95_upper"] if ci else None,"evaluation_rows":int(len(g)),
      "store_product_clusters":n_clusters,"test_folds":int(g.fold.nunique()),
-     "bootstrap_replicates":int(ci["bootstrap_replicates"]),
-     "uncertainty_scope":"cross-sectional paired cluster bootstrap; temporal-window uncertainty not covered"})
+     "bootstrap_replicates":int(ci["bootstrap_replicates"]) if ci else 0,
+     "uncertainty_scope":"pending post-hoc paired cluster bootstrap; no CI included in training job"})
   comparison_df=pd.DataFrame(comparison_rows)
   comparison_md=["# Rolling-backtest experiment comparison","",
    "Calibrated validation-gated segment specialists versus the current LightGBM baseline.",
-   "Intervals are paired store-product cluster-bootstrap 95% CIs; they do not capture future time-window uncertainty.","",
+   "Confidence intervals are added by the separate post-hoc bootstrap workflow; this file contains point estimates only until that step succeeds.","",
    "| Horizon | Metric | Baseline | Challenger | Improvement | 95% CI | Eval rows | Clusters | Folds |",
    "|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
   for row in comparison_rows:
