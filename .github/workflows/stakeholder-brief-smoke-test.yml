@@ -1,0 +1,76 @@
+name: Stakeholder brief live Groq smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      audience:
+        description: "Stakeholder audience"
+        required: false
+        default: "Executive leadership"
+        type: string
+      focus:
+        description: "Briefing focus (automatically capped by the API)"
+        required: false
+        default: "Explain the inventory service gap, forecast model comparisons, uncertainty experiments and next decisions."
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/stakeholder-brief-smoke-test.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stakeholder-brief-live-smoke
+  cancel-in-progress: false
+
+jobs:
+  live-groq-brief:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GROQ_API_KEY: \${{ secrets.GROQ_API_KEY }}
+      GROQ_MODEL: \${{ vars.GROQ_MODEL }}
+      R2_ACCOUNT_ID: \${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: \${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: \${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: \${{ secrets.R2_BUCKET }}
+      STAKEHOLDER_AUDIENCE: \${{ inputs.audience || 'Executive leadership' }}
+      STAKEHOLDER_FOCUS: \${{ inputs.focus || 'Explain the inventory service gap, forecast model comparisons, uncertainty experiments and next decisions.' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install API dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r api/requirements.txt
+
+      - name: Verify required secrets are present (without printing values)
+        run: |
+          test -n "$GROQ_API_KEY"
+          test -n "$R2_ACCOUNT_ID"
+          test -n "$R2_ACCESS_KEY_ID"
+          test -n "$R2_SECRET_ACCESS_KEY"
+          test -n "$R2_BUCKET"
+          echo "Groq and R2 credentials are configured."
+
+      - name: Generate full stakeholder brief using live R2 and Groq
+        run: python scripts/smoke_test_stakeholder_brief.py
+
+      - name: Upload generated stakeholder report
+        uses: actions/upload-artifact@v4
+        with:
+          name: stakeholder-brief-live-\${{ github.run_number }}
+          path: |
+            stakeholder-brief.md
+            stakeholder-brief-run.json
+          if-no-files-found: error
+          retention-days: 14
