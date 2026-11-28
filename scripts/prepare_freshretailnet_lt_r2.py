@@ -99,8 +99,8 @@ def validate_split(path: Path, split: str) -> dict:
         raise RuntimeError(f"{split} is missing required columns: {missing}")
     metadata = frame.select(
         pl.len().alias("rows"),
-        pl.col("dt").cast(pl.Date, strict=False).min().alias("date_min"),
-        pl.col("dt").cast(pl.Date, strict=False).max().alias("date_max"),
+        pl.col("dt").cast(pl.String).str.to_date(strict=False).min().alias("date_min"),
+        pl.col("dt").cast(pl.String).str.to_date(strict=False).max().alias("date_max"),
         pl.struct(["store_id", "product_id"]).n_unique().alias("series"),
         pl.col("sale_amount").is_null().sum().alias("null_sales"),
     ).collect().row(0, named=True)
