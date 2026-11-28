@@ -37,7 +37,10 @@ def make_features(df):
     df=df.with_columns(expr).with_columns([
         pl.col("sale_amount").shift(1).rolling_mean(window_size=7,min_samples=1).over(grp).alias("sales_roll_mean_7"),
         pl.col("sale_amount").shift(1).rolling_mean(window_size=28,min_samples=1).over(grp).alias("sales_roll_mean_28"),
-        pl.col("sale_amount").shift(1).rolling_std(window_size=7,min_samples=2).over(grp).fill_null(0).alias("sales_roll_std_7")])
+        pl.col("sale_amount").shift(1).rolling_std(window_size=7,min_samples=2).over(grp).fill_null(0).alias("sales_roll_std_7"),
+        pl.col("stock_hour6_22_cnt").shift(1).over(grp).alias("stockout_hours_lag_1"),
+        pl.col("stock_hour6_22_cnt").shift(1).rolling_max(window_size=7,min_samples=1).over(grp).alias("stockout_hours_roll_max_7"),
+    ])
     excluded={"dt","date","sale_amount","hours_sale","hours_stock_status","hourly_sales_sum",
       "hourly_sales_mean","hourly_sales_peak","hourly_slots","stock_status_sum","stock_status_slots","stock_hour6_22_cnt"}
     feats=[c for c in df.columns if c not in excluded]
@@ -76,6 +79,71 @@ def strata(frame,p):
     return {str(k):{"rows":int(len(g)),"coverage_pct":float(((g.actual>=g.p10)&(g.actual<=g.p90)).mean()*100),
                     "mean_interval_width":float((g.p90-g.p10).mean())}
             for k,g in z.groupby("group",observed=True)}
+
+EXPOSURE_GROUPS=("0_hours","1_2_hours","3_5_hours","6_9_hours","10_15_hours","16_hours")
+
+
+def exposure_groups(values):
+    """Bucket a prior-period exposure feature that is known at forecast issue time."""
+    return pd.cut(
+        pd.Series(np.asarray(values, dtype=float)),
+        bins=[-np.inf, 0, 2, 5, 9, 15, np.inf],
+        labels=list(EXPOSURE_GROUPS),
+        include_lowest=True,
+    ).astype(str).to_numpy()
+
+
+def conditional_conformal_adjustments(y, lower, upper, context_exposure,
+                                      global_qhat, coverage=.80,
+                                      min_group_rows=1000,
+                                      prior_strength_rows=2000):
+    """Estimate group adjustments on validation residuals using only lagged exposure context."""
+    y=np.asarray(y, dtype=float)
+    lower=np.asarray(lower, dtype=float)
+    upper=np.asarray(upper, dtype=float)
+    groups=exposure_groups(context_exposure)
+    adjustments={}
+    audit=[]
+    for label in EXPOSURE_GROUPS:
+        mask=groups==label
+        n=int(mask.sum())
+        if n < min_group_rows:
+            group_qhat=float(global_qhat)
+            weight=0.0
+            applied=float(global_qhat)
+            method="global_fallback_insufficient_validation_rows"
+        else:
+            group_qhat=conformal_adjustment(y[mask],lower[mask],upper[mask],coverage)
+            weight=float(n/(n+prior_strength_rows))
+            applied=float(weight*group_qhat+(1.0-weight)*global_qhat)
+            method="validation_group_quantile_shrunk_to_global"
+        adjustments[label]=applied
+        audit.append({
+            "prior_exposure_group":label,
+            "validation_rows":n,
+            "group_adjustment":float(group_qhat),
+            "global_adjustment":float(global_qhat),
+            "shrinkage_weight":weight,
+            "applied_adjustment":applied,
+            "method":method,
+        })
+    return adjustments,audit
+
+
+def calibrated_interval_by_group(y,p,context_exposure,adjustments):
+    """Apply validation-fitted adjustments selected by prior seven-day exposure."""
+    groups=exposure_groups(context_exposure)
+    qhat=np.array([adjustments.get(group,0.0) for group in groups],dtype=float)
+    lower=np.maximum(0.0,np.asarray(p[.10],dtype=float)-qhat)
+    upper=np.maximum(lower,np.asarray(p[.90],dtype=float)+qhat)
+    actual=np.asarray(y,dtype=float)
+    summary={
+        "coverage_pct":float(((actual>=lower)&(actual<=upper)).mean()*100),
+        "mean_width":float((upper-lower).mean()),
+        "mean_adjustment":float(qhat.mean()),
+        "context_feature":"stockout_hours_roll_max_7",
+    }
+    return summary,lower,upper
 def main():
     s3=client(); bucket=env("R2_BUCKET")
     with tempfile.TemporaryDirectory(prefix="frn-quantiles-") as td:
@@ -115,6 +183,22 @@ def main():
         val_cal,val_lo,val_hi=calibrated_interval(yv,vp,qhat)
         eval_cal,eval_lo,eval_hi=calibrated_interval(ye,ep,qhat)
         calibrated_ep={.10:eval_lo,.50:ep[.50],.90:eval_hi}
+
+        # Conditional conformal is stratified by the maximum stockout exposure
+        # observed during the previous seven days for that series. It does not
+        # use contemporaneous evaluation-day stock status to choose an interval.
+        history_adjustments,history_calibration_audit=conditional_conformal_adjustments(
+            yv,vp[.10],vp[.90],
+            v["stockout_hours_roll_max_7"].to_numpy(dtype=float),
+            qhat,coverage=.80,min_group_rows=1000,prior_strength_rows=2000,
+        )
+        val_cond_cal,val_cond_lo,val_cond_hi=calibrated_interval_by_group(
+            yv,vp,v["stockout_hours_roll_max_7"].to_numpy(dtype=float),history_adjustments
+        )
+        eval_cond_cal,eval_cond_lo,eval_cond_hi=calibrated_interval_by_group(
+            ye,ep,e["stockout_hours_roll_max_7"].to_numpy(dtype=float),history_adjustments
+        )
+        conditionally_calibrated_ep={.10:eval_cond_lo,.50:ep[.50],.90:eval_cond_hi}
         result={"validation":metrics(yv,vp),"evaluation":metrics(ye,ep),
           "conformal_calibration":{"method":"split conformalized quantile regression",
             "nominal_coverage_pct":80.0,"validation_adjustment":qhat,
@@ -122,7 +206,23 @@ def main():
             "evaluation_calibrated_interval":eval_cal,
             "caveat":"Calibration is estimated on a prior time window; temporal distribution shift can invalidate nominal future coverage."},
           "evaluation_calibrated_stockout_exposure_strata":strata(e,calibrated_ep),
+          "evaluation_conditional_calibrated_stockout_exposure_strata":strata(e,conditionally_calibrated_ep),
           "evaluation_stockout_exposure_strata":strata(e,ep),
+          "conditional_conformal_calibration":{
+            "method":"lagged stockout-exposure-grouped split conformal with shrinkage to global adjustment",
+            "context_feature":"stockout_hours_roll_max_7",
+            "context_definition":"maximum stock_hour6_22_cnt over the seven daily observations preceding the forecast date",
+            "context_available_at_forecast_time":True,
+            "nominal_coverage_pct":80.0,
+            "minimum_group_validation_rows":1000,
+            "prior_strength_rows":2000,
+            "global_validation_adjustment":float(qhat),
+            "validation_group_adjustments":history_calibration_audit,
+            "validation_interval":val_cond_cal,
+            "evaluation_interval":eval_cond_cal,
+            "evaluation_metrics":metrics(ye,conditionally_calibrated_ep),
+            "interpretation":"Candidate calibration only. Compare held-out coverage by contemporaneous stockout exposure and interval width; do not promote unless the high-exposure coverage gain is useful without unacceptable width inflation.",
+          },
           "validation_period":{"start":str(min(vd)),"end":str(max(vd))},
           "evaluation_period":{"start":str(ev.get_column("date").min()),"end":str(ev.get_column("date").max())},
           "rows":{"train":len(a),"validation":len(v),"evaluation":len(e)},
@@ -130,7 +230,7 @@ def main():
           "features":feats,"categorical_features":cats,"quantiles":list(QUANTILES),
           "nominal_interval_coverage_pct":80.0,"target":"sale_amount",
           "target_semantics":"Observed daily sales, not guaranteed uncensored demand.",
-          "leakage_note":"Contemporaneous hourly sales and stock status are excluded from predictors. Current-day stock exposure is only used for post-hoc stratification.",
+          "leakage_note":"Contemporaneous hourly sales and stock status are excluded from predictors. Historical stockout exposure is shifted by at least one day; current-day stock exposure is used only for post-hoc evaluation stratification.",
           "stockout_note":"Coverage by stockout exposure is descriptive, not causal. Confirm status encoding against dataset technical documentation.",
           "generated_at_utc":datetime.now(timezone.utc).isoformat()}
         mf=root/"quantile_metrics.json"; mf.write_text(json.dumps(result,indent=2,default=str))
@@ -138,6 +238,9 @@ def main():
         pd.DataFrame({"date":e["date"].astype(str),"store_id":e["store_id"],"product_id":e["product_id"],
                       "actual_sale_amount":ye.to_numpy(),"p10":ep[.10],"p50":ep[.50],"p90":ep[.90],
                       "p10_calibrated":eval_lo,"p90_calibrated":eval_hi,
+                      "p10_conditional_calibrated":eval_cond_lo,"p90_conditional_calibrated":eval_cond_hi,
+                      "stockout_hours_lag_1":e["stockout_hours_lag_1"].to_numpy(dtype=float),
+                      "stockout_hours_roll_max_7":e["stockout_hours_roll_max_7"].to_numpy(dtype=float),
                       "seasonal_naive_lag7":np.maximum(e["sales_lag_7"].to_numpy(dtype=float),0),
                       "stock_hour6_22_cnt":e["stock_hour6_22_cnt"].to_numpy()}).to_csv(pf,index=False)
         for f in paths+[mf,pf]:
