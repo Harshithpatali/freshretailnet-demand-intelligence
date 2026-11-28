@@ -589,6 +589,7 @@ def run_fold(
         raise RuntimeError(f"{fold_label}: empty chronological split")
 
     candidates = {}
+    candidate_heads = {}
     test_predictions = {}
     feature_gains = {}
     iteration_counts = {}
@@ -598,6 +599,7 @@ def run_fold(
             train, val_head, val_tail, test, features, model_name
         )
         candidates[model_name] = fitted["pred_tail"]
+        candidate_heads[model_name] = fitted["pred_head"]
         test_predictions[model_name] = fitted["pred_test"]
         feature_gains[model_name] = fitted["feature_gain"]
         iteration_counts[model_name] = fitted["best_iteration"]
@@ -608,8 +610,8 @@ def run_fold(
         val_head,
         val_tail,
         test,
-        candidates["spectral"][:len(val_head)],
-        candidates["spectral"][len(val_head):],
+        candidate_heads["spectral"],
+        candidates["spectral"],
         test_predictions["spectral"],
         spectral_features,
     )
