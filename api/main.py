@@ -217,12 +217,10 @@ def search_series(
     df = _safe_csv(key)
     df = _require_columns(df, key, {"store_id", "product_id"})
     pairs = df[["store_id", "product_id"]].astype(str).drop_duplicates()
-    stores = pairs["store_id"]
-    products = pairs["product_id"]
     if store_id:
-        pairs = pairs[stores.str.contains(store_id, case=False, regex=False, na=False)]
+        pairs = pairs[pairs["store_id"].str.contains(store_id, case=False, regex=False, na=False)]
     if product_id:
-        pairs = pairs[products.str.contains(product_id, case=False, regex=False, na=False)]
+        pairs = pairs[pairs["product_id"].str.contains(product_id, case=False, regex=False, na=False)]
     if q:
         mask = (
             pairs["store_id"].str.contains(q, case=False, regex=False, na=False)
