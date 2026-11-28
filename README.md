@@ -197,6 +197,24 @@ realized fill on the later windows; constrained and tight scenarios produced 60.
 the current demand distribution and/or available replenishment capacity is not reliable
 enough for policy promotion. See [the optimizer backtest report](docs/results/inventory_optimizer_backtest.md).
 
+### Verified research run results
+
+The successful **Service-Level Inventory Decision Optimization** run #46142217478
+published six R2 artifacts and a complete backtest report. Its balanced 90% expected-fill
+plan realized 79.85% fill on later windows; capacity-constrained scenarios achieved
+60.28% and 42.69%. This is a successful solver run but not an achieved empirical SLA.
+See [inventory optimizer backtest](docs/results/inventory_optimizer_backtest.md).
+
+The successful deterministic **Forecast Research Benchmark** run #46143243242
+published and size-verified five R2 artifacts. On a fixed-seed sample of 3,000 complete
+series, the residual-corrected model reduced final seven-day research-sample MAE by
+about 5.12% and RMSE by about 9.42% relative to baseline under the paired two-way
+bootstrap. The direct wavelet-versus-spectral ablation did not show statistically
+supported improvement. The ensemble selector assigned effectively all weight to the
+residual-corrected candidate. The seven-day evaluation split was previously used in
+project benchmarks and is not an untouched production-promotion test. See
+[forecast research benchmark](docs/results/forecast_research_benchmark.md).
+
 ## Run locally
 
 The raw Parquet files are stored in private R2 and are not included in this repository. A fully data-backed local run therefore requires access to the same raw objects or equivalent source files. There is no bundled sample dataset at present.
