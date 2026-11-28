@@ -421,6 +421,9 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
         for part in parts
     )
     assert estimated_reserved_tokens < 7000
+    assert all(len(part["user_message"]) < 5000 for part in parts)
+    assert len(parts[0]["user_message"]) < 3500
+    assert len(parts[1]["user_message"]) < 4500
 
 
 def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
@@ -495,8 +498,8 @@ def test_stakeholder_brief_generates_two_sections_and_combines_them(monkeypatch)
     assert len(calls) == 2
     assert "FreshRetailNet-LT" in calls[0]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[1]["messages"][1]["content"]
-    assert calls[0]["max_completion_tokens"] == 1400
-    assert calls[1]["max_completion_tokens"] == 1400
+    assert calls[0]["max_completion_tokens"] == 1200
+    assert calls[1]["max_completion_tokens"] == 1200
     assert "Inventory metric explanations." in result["brief_markdown"]
     assert "Forecast experiment comparisons." in result["brief_markdown"]
     assert result["generation_strategy"] == "two_part_groq"
@@ -569,6 +572,67 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
                 },
             },
         },
+    }
+    raw["inventory_optimizer"]["scenario_results"][0].update({
+        "empirical_cycle_service_level": .3275,
+        "unfulfilled_protection_demand": 1000,
+        "leftover_stock": 250,
+        "holding_cost": 5000,
+        "shortage_cost": 2000,
+        "ordering_cost": 100,
+        "mean_storage_utilization_pct": 49.73,
+        "mean_replenishment_utilization_pct": 99.47,
+        "service_target_met_store_count": 767,
+        "evaluation_windows": 13065,
+    })
+    raw["inventory_optimizer"]["capacity_diagnostics"][0]["replenishment_utilization_pct"].update({
+        "p90": 100, "share_at_least_90_pct": 90, "share_at_least_99_pct": 65,
+    })
+    raw["inventory_optimizer"]["capacity_diagnostics"][0]["storage_utilization_pct"] = {
+        "p50": 50, "p90": 80, "p95": 95, "max": 100,
+    }
+    raw["inventory_optimizer"]["distribution_diagnostics"]["results"] = [
+        {"segment_type": "overall", "distribution": name, "median_mae": .3,
+         "pinball_q10": .1, "pinball_q50": .2, "pinball_q90": .3,
+         "central_80_coverage_pct": 78, "central_80_mean_width": .7}
+        for name in ("moment_lognormal", "empirical_bootstrap", "conformal_residual")
+    ]
+    raw["forecast_research"]["rolling_design"]["pooled_test_metrics"] = [
+        {"model": name, "mae": .38, "rmse": .67, "wape_pct": 34.3, "bias_pct": -2.5}
+        for name in ("baseline", "fourier_stl", "spectral", "wavelet", "residual_corrected", "ensemble")
+    ]
+    raw["forecast_research"]["final_research_comparison"]["metrics"] = [
+        {"model": name, "mae": .4, "rmse": .7, "wape_pct": 33.6, "bias_pct": -.6}
+        for name in ("baseline", "fourier_stl", "spectral", "wavelet", "residual_corrected", "ensemble")
+    ]
+    raw["forecast_research"]["final_research_comparison"]["bootstrap_vs_baseline"] = {
+        "replicates": 300,
+        "comparisons_vs_baseline": {
+            name: {
+                metric: {"mean_improvement_pct": 5.1, "ci_95_low_pct": 1.7,
+                         "ci_95_high_pct": 8.7, "ci_excludes_zero": True}
+                for metric in ("mae", "rmse", "wape")
+            }
+            for name in ("fourier_stl", "spectral", "wavelet", "residual_corrected")
+        },
+    }
+    raw["forecast_research"]["final_research_comparison"]["wavelet_ablation_vs_spectral"] = {
+        "replicates": 300,
+        "comparisons_vs_baseline": {
+            "wavelet": {
+                metric: {"mean_improvement_pct": .1, "ci_95_low_pct": -.3,
+                         "ci_95_high_pct": .5, "ci_excludes_zero": False}
+                for metric in ("mae", "rmse", "wape")
+            }
+        },
+    }
+    raw["forecast_research"]["methods"] = {
+        "fourier": "Calendar harmonics.",
+        "stl": "Weekly decomposition.",
+        "spectral": "Periodogram features.",
+        "wavelet": "Causal db2 decomposition.",
+        "residual_model": "Residual correction.",
+        "ensemble": "Validation-selected weights.",
     }
     evidence = api._compact_stakeholder_evidence(raw)
     encoded = __import__("json").dumps(evidence, separators=(",", ":"))

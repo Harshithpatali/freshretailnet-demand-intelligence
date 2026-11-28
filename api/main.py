@@ -133,7 +133,7 @@ def _compact_bootstrap(payload: Any) -> dict[str, Any]:
 
 
 def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
-    """Build separate inventory and forecasting evidence packs for two Groq calls."""
+    """Create short, high-signal evidence packs for the two briefing requests."""
     inventory = raw.get("inventory_optimizer") or {}
     if not isinstance(inventory, Mapping):
         inventory = {}
@@ -146,108 +146,99 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
         ),
         scenario_source[0] if isinstance(scenario_source, list) and scenario_source else {},
     )
-    scenarios = _compact_rows(
+    scenario = _compact_rows(
         [balanced] if isinstance(balanced, Mapping) else [],
         (
-            "scenario", "target_fill_rate", "empirical_fill_rate",
-            "theoretical_expected_fill_rate", "empirical_cycle_service_level",
-            "actual_protection_demand", "fulfilled_protection_demand",
-            "unfulfilled_protection_demand", "leftover_stock",
-            "holding_cost", "shortage_cost", "ordering_cost",
-            "total_simulated_cost", "theoretical_expected_cost_per_protection_period",
+            "scenario", "target_fill_rate", "theoretical_expected_fill_rate",
+            "empirical_fill_rate", "empirical_cycle_service_level",
             "capacity_limited_store_count", "service_target_met_store_count",
-            "service_target_met_empirically", "store_count", "store_product_series",
-            "evaluation_windows_per_series", "evaluation_windows",
+            "store_count", "store_product_series", "evaluation_windows",
+            "unfulfilled_protection_demand", "leftover_stock", "holding_cost",
+            "shortage_cost", "ordering_cost", "total_simulated_cost",
             "mean_storage_utilization_pct", "mean_replenishment_utilization_pct",
+            "service_target_met_empirically",
         ),
         limit=1,
     )
 
-    capacity_source = inventory.get("capacity_diagnostics", [])
-    capacity_source = [
-        row for row in capacity_source
-        if isinstance(row, Mapping) and row.get("scenario") == "balanced_90pct"
-    ] if isinstance(capacity_source, list) else []
-    capacity = _compact_capacity(capacity_source[:1])
-
-    segments_source = inventory.get("segment_results", [])
-    segments_source = [
-        row for row in segments_source
-        if isinstance(row, Mapping) and row.get("scenario") == "balanced_90pct"
-    ] if isinstance(segments_source, list) else []
-    segments = _compact_rows(
-        segments_source,
+    capacity_rows = inventory.get("capacity_diagnostics", [])
+    capacity_row = next(
         (
-            "segment_type", "segment", "stores", "series", "evaluation_windows",
-            "actual_demand", "fulfilled_demand", "empirical_fill_rate",
-            "shortage_units", "leftover_units", "simulated_cost",
+            row for row in capacity_rows
+            if isinstance(row, Mapping) and row.get("scenario") == "balanced_90pct"
         ),
+        {},
+    ) if isinstance(capacity_rows, list) else {}
+    replenishment = capacity_row.get("replenishment_utilization_pct", {})
+    storage = capacity_row.get("storage_utilization_pct", {})
+    size_rows = capacity_row.get("by_store_size", [])
+    capacity = {
+        "replenishment_utilization_pct": _pick_fields(
+            replenishment,
+            ("p50", "p90", "p95", "max", "share_at_least_90_pct",
+             "share_at_least_95_pct", "share_at_least_99_pct"),
+        ),
+        "storage_utilization_pct": _pick_fields(
+            storage, ("p50", "p90", "p95", "max", "share_at_least_95_pct")
+        ),
+        "by_store_size": _compact_rows(
+            size_rows,
+            ("store_size_segment", "stores", "mean_replenishment_utilization_pct",
+             "share_replenishment_at_least_95_pct", "service_target_met_stores"),
+            limit=3,
+        ),
+    }
+
+    segment_source = inventory.get("segment_results", [])
+    segment_source = [
+        row for row in segment_source
+        if isinstance(row, Mapping) and row.get("scenario") == "balanced_90pct"
+    ] if isinstance(segment_source, list) else []
+    segments = _compact_rows(
+        segment_source,
+        ("segment_type", "segment", "stores", "empirical_fill_rate", "shortage_units"),
         limit=6,
     )
 
-    dist = inventory.get("distribution_diagnostics", {})
-    dist_rows = dist.get("results", []) if isinstance(dist, Mapping) else []
-    dist_rows = [
-        row for row in dist_rows
+    distribution = inventory.get("distribution_diagnostics", {})
+    distribution_rows = distribution.get("results", []) if isinstance(distribution, Mapping) else []
+    distribution_rows = [
+        row for row in distribution_rows
         if isinstance(row, Mapping) and row.get("segment_type") == "overall"
-    ] if isinstance(dist_rows, list) else []
-    distributions = _compact_rows(
-        dist_rows,
-        (
-            "distribution", "evaluation_windows", "median_mae",
-            "pinball_q10", "pinball_q50", "pinball_q90",
-            "central_80_coverage_pct", "central_80_mean_width", "median_bias_pct",
-        ),
+    ] if isinstance(distribution_rows, list) else []
+    distribution_scores = _compact_rows(
+        distribution_rows,
+        ("distribution", "median_mae", "pinball_q10", "pinball_q50",
+         "pinball_q90", "central_80_coverage_pct", "central_80_mean_width"),
         limit=3,
     )
-
     population = inventory.get("evaluation_population", {})
+    calibration = inventory.get("calibration_design", {})
     evaluation_design = inventory.get("evaluation_design", {})
     compact_inventory = {
-        "source_population": "FreshRetailNet-LT (external population; separate from FreshRetailNet-50K)",
         "population": _pick_fields(
             population,
-            (
-                "target_date_start", "target_date_end", "target_dates",
-                "complete_continuous_series", "total_series_with_any_prediction",
-            ),
+            ("target_date_start", "target_date_end", "target_dates",
+             "complete_continuous_series"),
         ),
         "calibration_windows_per_series": (
-            inventory.get("calibration_design", {}).get("windows_per_series")
-            if isinstance(inventory.get("calibration_design"), Mapping) else None
+            calibration.get("windows_per_series") if isinstance(calibration, Mapping) else None
         ),
         "evaluation_windows_per_series": (
             evaluation_design.get("windows_per_series")
             if isinstance(evaluation_design, Mapping) else None
         ),
-        "target_definition": "Store-wide volume-weighted expected fill rate over a seven-day protection period",
-        "scenario": scenarios[0] if scenarios else {},
+        "scenario": scenario[0] if scenario else {},
         "capacity": capacity,
         "segments": segments,
-        "distribution_reference": (
-            dist.get("reference_optimizer_distribution")
-            if isinstance(dist, Mapping) else None
+        "reference_distribution": (
+            distribution.get("reference_optimizer_distribution")
+            if isinstance(distribution, Mapping) else None
         ),
         "distribution_challengers": (
-            dist.get("challengers") if isinstance(dist, Mapping) else None
+            distribution.get("challengers") if isinstance(distribution, Mapping) else None
         ),
-        "distribution_scored_on": (
-            dist.get("scored_on") if isinstance(dist, Mapping) else None
-        ),
-        "distribution_scores": distributions,
-        "distribution_limitations": (
-            str(dist.get("limitations", ""))[:260] if isinstance(dist, Mapping) else ""
-        ),
-        "optimizer_objective": (
-            "Minimize expected holding cost + expected shortage cost + fixed ordering cost, "
-            "subject to service, storage, replenishment, MOQ, pack-size and SKU order-cap constraints."
-        ),
-        "cost_and_pack_assumptions": (
-            "Illustrative normalized assumptions, not retailer-measured economics or supplier pack data."
-        ),
-        "limitations": [
-            str(item)[:220] for item in inventory.get("limitations", [])[:6]
-        ] if isinstance(inventory.get("limitations"), list) else [],
+        "distribution_scores": distribution_scores,
     }
 
     forecast = raw.get("forecast_research") or {}
@@ -255,13 +246,10 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
         forecast = {}
     rolling = forecast.get("rolling_design", {})
     final = forecast.get("final_research_comparison", {})
-    methods = forecast.get("methods", {})
     if not isinstance(rolling, Mapping):
         rolling = {}
     if not isinstance(final, Mapping):
         final = {}
-    if not isinstance(methods, Mapping):
-        methods = {}
 
     def metric_rows(source: Any) -> list[dict[str, Any]]:
         if not isinstance(source, list):
@@ -274,99 +262,107 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
             str(row.get("model")): row
             for row in source if isinstance(row, Mapping)
         }
-        selected = [
-            _pick_fields(
-                by_name[name],
-                ("model", "mae", "rmse", "wape_pct", "bias_pct"),
-            )
-            for name in priority if name in by_name
-        ]
-        baseline = next((row for row in selected if row.get("model") == "baseline"), None)
-        if isinstance(baseline, Mapping):
-            for row in selected:
-                if row.get("model") == "baseline":
-                    continue
-                improvements = {}
+        selected = []
+        baseline = by_name.get("baseline", {})
+        for name in priority:
+            row = by_name.get(name)
+            if not isinstance(row, Mapping):
+                continue
+            compact = _pick_fields(row, ("model", "mae", "rmse", "wape_pct", "bias_pct"))
+            if name != "baseline":
                 for metric in ("mae", "rmse", "wape_pct"):
-                    base_value = baseline.get(metric)
+                    base_value = baseline.get(metric) if isinstance(baseline, Mapping) else None
                     model_value = row.get(metric)
                     if (
                         isinstance(base_value, (int, float))
                         and isinstance(model_value, (int, float))
                         and float(base_value) > 0
                     ):
-                        improvements[metric] = round(
+                        compact[f"{metric}_improvement_pct"] = round(
                             (float(base_value) - float(model_value))
                             / float(base_value) * 100.0,
-                            3,
+                            2,
                         )
-                if improvements:
-                    row["improvement_vs_baseline_pct"] = improvements
+            selected.append(compact)
         return selected
 
+    def selected_bootstrap(payload: Any, models: tuple[str, ...]) -> dict[str, Any]:
+        if not isinstance(payload, Mapping):
+            return {}
+        comparisons = payload.get("comparisons_vs_baseline", {})
+        if not isinstance(comparisons, Mapping):
+            return {}
+        compact_comparisons = {}
+        for model_name in models:
+            metrics = comparisons.get(model_name)
+            if not isinstance(metrics, Mapping):
+                continue
+            metric_pack = {}
+            for metric_name in ("mae", "rmse", "wape"):
+                metric = metrics.get(metric_name)
+                if isinstance(metric, Mapping):
+                    metric_pack[metric_name] = _pick_fields(
+                        metric,
+                        ("mean_improvement_pct", "ci_95_low_pct",
+                         "ci_95_high_pct", "ci_excludes_zero"),
+                    )
+            if metric_pack:
+                compact_comparisons[model_name] = metric_pack
+        return {
+            "replicates": payload.get("replicates"),
+            "comparisons": compact_comparisons,
+        }
+
+    bootstrap = final.get("bootstrap_vs_baseline", {})
+    wavelet_ablation = final.get("wavelet_ablation_vs_spectral", {})
     weights = final.get("ensemble_weights", {})
     if not isinstance(weights, Mapping):
         weights = {}
-    weights = {
-        str(name): round(float(value), 3)
+    compact_weights = {
+        str(name): round(float(value), 2)
         for name, value in list(weights.items())[:6]
         if isinstance(value, (int, float))
     }
-
     diversity = final.get("ensemble_diversity", {})
     compact_forecast = {
-        "source_population": "FreshRetailNet-50K",
         "sample_series": forecast.get("series_sample_size_complete"),
-        "sample_policy": str(forecast.get("sample_policy", ""))[:220],
-        "seed": forecast.get("seed"),
-        "experiment": str(forecast.get("experiment", ""))[:240],
-        "rolling_design": {
-            "note": str(rolling.get("note", ""))[:300],
-            "warmup_days": rolling.get("warmup_days"),
-            "fold_count": len(rolling.get("folds", [])) if isinstance(rolling.get("folds"), list) else None,
-            "pooled_test_metrics": metric_rows(rolling.get("pooled_test_metrics", [])),
-        },
-        "validation_period": final.get("validation_period"),
+        "rolling_folds": (
+            len(rolling.get("folds", [])) if isinstance(rolling.get("folds"), list) else None
+        ),
+        "rolling_metrics": metric_rows(rolling.get("pooled_test_metrics", [])),
         "evaluation_period": final.get("evaluation_period"),
         "final_metrics": metric_rows(final.get("metrics", [])),
-        "ensemble_weights": weights,
-        "ensemble_weight_cap": final.get("ensemble_weight_cap"),
-        "ensemble_diversity": _pick_fields(
-            diversity,
-            ("effective_model_count", "contributing_models", "max_weight"),
+        "ensemble_weights": compact_weights,
+        "ensemble_effective_models": (
+            diversity.get("effective_model_count") if isinstance(diversity, Mapping) else None
         ),
-        "bootstrap_vs_baseline": _compact_bootstrap(
-            final.get("bootstrap_vs_baseline", {})
+        "bootstrap_vs_baseline": selected_bootstrap(
+            bootstrap, ("fourier_stl", "spectral", "wavelet", "residual_corrected")
         ),
-        "wavelet_ablation_vs_spectral": _compact_bootstrap(
-            final.get("wavelet_ablation_vs_spectral", {})
+        "wavelet_ablation_vs_spectral": selected_bootstrap(
+            wavelet_ablation, ("wavelet",)
         ),
-        "methods": _pick_fields(
-            methods,
-            ("fourier", "stl", "spectral", "wavelet", "residual_model", "ensemble"),
-        ),
-        "limitations": [
-            str(item)[:240] for item in forecast.get("limitations", [])[:7]
-        ] if isinstance(forecast.get("limitations"), list) else [],
-        "promotion_status": str(final.get("status", ""))[:180],
+        "experiment_methods": {
+            "fourier_stl": "Calendar harmonics and weekly STL trend, seasonal and residual features.",
+            "spectral": "Dominant historical periods, weekly energy share and spectral entropy.",
+            "wavelet": "Causal db2 trailing-32-day coefficient features added to spectral features.",
+            "residual_corrected": "LightGBM trained to correct baseline forecast residuals.",
+            "ensemble": "Non-negative model weights selected on validation data and frozen for evaluation.",
+        },
+        "holdout_status": str(final.get("status", ""))[:150],
     }
     return {"inventory": compact_inventory, "forecast": compact_forecast}
 
 
 def _stakeholder_system_prompt() -> str:
     return (
-        "You are a senior retail supply-chain and forecasting analytics advisor. "
-        "Use only supplied evidence; do not invent missing values. Explain every reported "
-        "metric in plain language and state how it is calculated or interpreted. Distinguish "
-        "targets, theoretical expectations, empirical outcomes, estimates and assumptions. "
-        "Lower forecast error is better; signed bias near zero is preferable. Positive bootstrap "
-        "improvement means lower error than the named baseline, and an interval crossing zero "
-        "is inconclusive. Never claim simulated costs are realized savings, expected fill is "
-        "achieved service, observed sales are latent demand, or a research challenger is "
-        "production-ready. Keep FreshRetailNet-LT inventory findings separate from "
-        "FreshRetailNet-50K forecasting findings. Write a detailed, readable Markdown report "
-        "for the requested audience, with explanatory headings, short paragraphs and compact "
-        "tables. End with actionable next steps and measurable acceptance tests."
+        "You are a retail analytics advisor. Use only supplied evidence. Define metrics in plain "
+        "language; distinguish expected from achieved service, simulated costs from savings, and "
+        "observed sales from latent demand. Lower MAE/RMSE/WAPE is better; bias near zero is better. "
+        "Positive bootstrap improvement means lower error; a 95% interval crossing zero is inconclusive. "
+        "Do not invent values or claim production readiness. Inventory uses FreshRetailNet-LT; "
+        "forecasting uses a separate FreshRetailNet-50K sample. Write readable Markdown with headings, "
+        "short paragraphs and compact tables, followed by ranked actions with owners and acceptance tests."
     )
 
 
@@ -379,79 +375,51 @@ def _stakeholder_prompt_parts(
     import json
 
     inventory_payload = {
-        "part": "1 of 2: Inventory optimisation and service-level evidence",
+        "part": "Inventory optimisation explanation",
         "audience": request.audience,
-        "decision_focus": request.focus,
-        "source_artifacts": [
-            item for item in sources if "inventory_optimizer_summary" in item
-        ],
-        "missing_source_artifacts": [
-            item for item in missing if "inventory_optimizer_summary" in item
-        ],
+        "focus": request.focus,
+        "source": [item for item in sources if "inventory_optimizer_summary" in item],
+        "missing": [item for item in missing if "inventory_optimizer_summary" in item],
         "evidence": evidence.get("inventory", {}),
-        "required_coverage": [
-            "Open with a concise inventory-specific finding, not a generic executive paragraph.",
-            "Explain the evaluation population, horizon, calibration and later evaluation windows.",
-            "Define target fill rate, theoretical expected fill, empirical fill, empirical cycle service level, "
-            "the percentage-point service gap, replenishment and storage utilisation percentiles, "
-            "capacity-limited stores, segment shortage units, and every distribution score present.",
-            "Compare theoretical expected fill with empirical later-window fill. Explain why the gap matters.",
-            "Explain the balanced scenario and the capacity bottleneck, then interpret each store-size and "
-            "SKU-demand segment present in the evidence.",
-            "Explain the reference demand distribution and challenger distribution experiments, including "
-            "median MAE, pinball loss, central-80% coverage and interval width where supplied.",
-            "Explain simulated cost components only as illustrative normalized assumptions, never as realized savings.",
-            "End with limitations and 2-3 reversible operational/research next steps with owners and numeric acceptance tests.",
-        ],
-        "length_and_style": (
-            "Aim for 500-650 words. Use a short metric glossary table with columns Metric, Meaning, "
-            "How to read this result. Do not make a dense one-line summary or omit definitions."
+        "instructions": (
+            "Write 500-600 words. Explain the FreshRetailNet-LT population, 70-day horizon, five "
+            "calibration and five later evaluation windows. Define target fill, theoretical expected "
+            "fill, empirical fill, cycle service level, percentage-point gap, utilization percentiles, "
+            "capacity-limited stores, segment shortage units, median MAE, pinball loss, central-80% "
+            "coverage and interval width. Interpret the balanced 90% scenario and each reported "
+            "segment. Explain why expected service differs from later realized service. Describe "
+            "lognormal vs empirical-bootstrap vs conformal diagnostics. Explain simulated holding, "
+            "shortage and ordering costs as normalized assumptions, not real savings. End with "
+            "limitations and 2-3 reversible next steps, owners and measurable tests."
         ),
     }
     forecast_payload = {
-        "part": "2 of 2: Forecast research, model comparison and combined decisions",
+        "part": "Forecast model comparison and experiment explanation",
         "audience": request.audience,
-        "decision_focus": request.focus,
-        "source_artifacts": [
-            item for item in sources if "forecast_research_summary" in item
-        ],
-        "missing_source_artifacts": [
-            item for item in missing if "forecast_research_summary" in item
-        ],
+        "focus": request.focus,
+        "source": [item for item in sources if "forecast_research_summary" in item],
+        "missing": [item for item in missing if "forecast_research_summary" in item],
         "evidence": evidence.get("forecast", {}),
-        "required_coverage": [
-            "Explain the deterministic sample, chronological validation approach, three rolling seven-day folds, "
-            "original evaluation dates, and why the previously used seven-day period is not an untouched holdout.",
-            "Define MAE, RMSE, WAPE and signed bias, with clear directionality and formulas in plain language.",
-            "Compare every available model in both rolling results and final-period results; explicitly quantify "
-            "relative error reductions from improvement_vs_baseline_pct without implying business savings.",
-            "Explain Fourier/STL, spectral, wavelet, residual correction and validation-selected ensemble experiments.",
-            "Discuss paired bootstrap confidence intervals against baseline and the direct wavelet-versus-spectral "
-            "ablation. State which intervals exclude zero and which experiments are inconclusive.",
-            "Interpret ensemble weights and effective model count. Do not call it a diverse blend if only one model "
-            "has material weight or if effective model count indicates concentration.",
-            "Explain what is genuinely better, what is only promising, what failed to show added value, and why "
-            "the production baseline must remain until a later untouched temporal evaluation.",
-            "Close with a short integrated decision list, owners, measurable acceptance tests and limitations. "
-            "Explicitly state that forecast and inventory populations are separate and must not be pooled.",
-        ],
-        "length_and_style": (
-            "Aim for 550-700 words. Include a compact model-comparison table, a separate experiment/uncertainty "
-            "interpretation, and ranked recommendations. Avoid repeating the entire inventory glossary."
+        "instructions": (
+            "Write 600-700 words. Define MAE (mean absolute error), RMSE (square-root mean squared error), "
+            "WAPE (absolute errors divided by total actual volume) and signed bias (over/under-forecasting). "
+            "Compare every model in rolling metrics and final metrics; explain reported relative improvements. "
+            "Explain Fourier/STL, spectral, wavelet, residual correction and ensemble experiments. Interpret "
+            "paired bootstrap intervals and direct wavelet-vs-spectral ablation; identify intervals crossing "
+            "zero. Explain ensemble concentration from weights/effective model count. State the final seven-day "
+            "period was previously used and is not untouched; keep populations separate. End with ranked "
+            "recommendations, owner and acceptance test; do not recommend production promotion before a later "
+            "untouched holdout."
         ),
     }
     return [
         {
-            "title": "Inventory optimisation and service-level explanation",
-            "user_message": json.dumps(
-                inventory_payload, ensure_ascii=False, default=str, separators=(",", ":")
-            ),
+            "title": "Inventory explanation",
+            "user_message": json.dumps(inventory_payload, ensure_ascii=False, default=str, separators=(",", ":")),
         },
         {
-            "title": "Forecast experiments, model comparisons and decisions",
-            "user_message": json.dumps(
-                forecast_payload, ensure_ascii=False, default=str, separators=(",", ":")
-            ),
+            "title": "Forecast and experiment explanation",
+            "user_message": json.dumps(forecast_payload, ensure_ascii=False, default=str, separators=(",", ":")),
         },
     ]
 
@@ -990,7 +958,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         parts = _stakeholder_prompt_parts(request, evidence, sources, missing)
         system_message = _stakeholder_system_prompt()
         max_prompt_characters = 5_000
-        max_completion_tokens = 1_400
+        max_completion_tokens = 1_200
         prompt_sizes = [
             len(system_message) + len(part["user_message"])
             for part in parts
