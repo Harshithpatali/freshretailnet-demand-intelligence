@@ -92,8 +92,12 @@ with tabs[0]:
 
 with tabs[1]:
     st.subheader("Evaluation forecast explorer")
-    filters = get_json("/api/v1/filters")
-    series_options = filters.get("series", [])
+    try:
+        filters = get_json("/api/v1/filters")
+    except Exception as exc:
+        filters = None
+        st.warning(f"Forecast filters are unavailable: {exc}")
+    series_options = filters.get("series", []) if filters else []
     if series_options:
         labels = [f"Store {x['store_id']} · Product {x['product_id']}" for x in series_options]
         selected = st.selectbox("Select one store-product series", range(len(labels)), format_func=lambda i: labels[i])
@@ -102,13 +106,15 @@ with tabs[1]:
     else:
         st.warning("The API has not returned the available store-product pairs. Redeploy the API before using this explorer.")
         chosen = None
-    start = st.text_input("Start date (YYYY-MM-DD)", filters["dates"]["start"])
-    end = st.text_input("End date (YYYY-MM-DD)", filters["dates"]["end"])
+    start = st.text_input("Start date (YYYY-MM-DD)", filters["dates"]["start"] if filters else "")
+    end = st.text_input("End date (YYYY-MM-DD)", filters["dates"]["end"] if filters else "")
     params = {"limit":10000, "date_from":start, "date_to":end}
     if chosen:
         params["store_id"] = chosen["store_id"]
         params["product_id"] = chosen["product_id"]
     try:
+        if not filters:
+            raise RuntimeError("Forecast filter artifact is unavailable; republish quantile predictions.")
         data = get_json("/api/v1/forecasts", params)
         f = pd.DataFrame(data["rows"])
         if f.empty:
@@ -154,14 +160,22 @@ with tabs[3]:
     with c1: metric("Training rows", f'{stock.get("rows",0):,}')
     with c2: metric("Rows with stockout exposure", f'{stock.get("stockout_affected_row_rate",0)*100:.1f}%')
     with c3: metric("Mean stockout hours (06–21)", f'{stock.get("mean_stockout_hours_06_22",0):.2f}')
-    buckets = pd.DataFrame(get_json("/api/v1/stockout/buckets")["rows"])
+    try:
+        buckets = pd.DataFrame(get_json("/api/v1/stockout/buckets")["rows"])
+    except Exception as exc:
+        buckets = pd.DataFrame()
+        st.warning(f"Stockout bucket artifact unavailable: {exc}")
     if not buckets.empty:
         buckets["zero_sales_rate_pct"] = pd.to_numeric(buckets["zero_sales_rate"], errors="coerce")*100
         fig = px.bar(buckets, x="stockout_bucket", y="mean_observed_sales", title="Mean observed sales by stockout-exposure bucket")
         fig.update_layout(height=380, margin={"l":15,"r":15,"t":55,"b":20})
         st.plotly_chart(fig, use_container_width=True)
         compact_table(buckets, 300)
-    hourly = pd.DataFrame(get_json("/api/v1/stockout/hourly")["rows"])
+    try:
+        hourly = pd.DataFrame(get_json("/api/v1/stockout/hourly")["rows"])
+    except Exception as exc:
+        hourly = pd.DataFrame()
+        st.warning(f"Hourly stockout artifact unavailable: {exc}")
     if not hourly.empty:
         fig = px.line(hourly, x="hour_of_day", y="out_of_stock_rate", title="Out-of-stock rate by vector index")
         fig.update_layout(height=350, margin={"l":15,"r":15,"t":55,"b":20})
@@ -185,7 +199,11 @@ with tabs[4]:
                           yaxis={"tickformat":",.0f"}, margin={"l":15,"r":15,"t":55,"b":20})
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Costs are dimensionless simulation cost units derived from configured penalties and order costs; no currency is specified by the dataset or simulator.")
-    sens = pd.DataFrame(get_json("/api/v1/inventory/sensitivity")["rows"])
+    try:
+        sens = pd.DataFrame(get_json("/api/v1/inventory/sensitivity")["rows"])
+    except Exception as exc:
+        sens = pd.DataFrame()
+        st.warning(f"Inventory sensitivity artifact unavailable: {exc}")
     if not sens.empty:
         st.subheader("Shortage penalty sensitivity")
         cols = [c for c in ["scenario","policy","steady_state_fill_rate_pct","steady_state_total_cost","steady_state_shortage_cost"] if c in sens]
@@ -236,7 +254,11 @@ with tabs[5]:
 with tabs[6]:
     st.subheader("Experiment lab")
     st.caption("Run a configurable, reproducible what-if inventory experiment on one held-out store-product series. Results are a small-sample simulation, not causal estimates or operational savings.")
-    exp_filters = get_json("/api/v1/filters")
+    try:
+        exp_filters = get_json("/api/v1/filters")
+    except Exception as exc:
+        exp_filters = {}
+        st.warning(f"Experiment inputs are unavailable: {exc}")
     exp_series = exp_filters.get("series", [])
     if not exp_series:
         st.warning("No evaluation series are available from the API.")
