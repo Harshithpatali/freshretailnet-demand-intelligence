@@ -414,7 +414,7 @@ def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
         api, "_stakeholder_evidence",
         lambda: ({"inventory_optimizer": {}, "forecast_research": {}}, ["inventory.json"], []),
     )
-    monkeypatch.setattr(api, "_compact_stakeholder_evidence", lambda _raw: {"payload": "x" * 15000})
+    monkeypatch.setattr(api, "_compact_stakeholder_evidence", lambda _raw: {"inventory": {"payload": "x" * 15000}, "forecast": {}})
     request = api.StakeholderBriefRequest(audience="Executive leadership", focus="Summarize results.")
     with pytest.raises(HTTPException) as exc:
         api.generate_stakeholder_brief(request)
@@ -423,6 +423,69 @@ def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
     assert exc.value.detail["prompt_characters"] > exc.value.detail["maximum_prompt_characters"]
     assert exc.value.detail["maximum_prompt_characters"] == 5000
     assert "safe limit" in exc.value.detail["message"]
+
+
+
+
+
+def test_stakeholder_brief_generates_two_sections_and_combines_them(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr(
+        api,
+        "_stakeholder_evidence",
+        lambda: (
+            {"inventory_optimizer": {"scenario_results": []}, "forecast_research": {}},
+            ["inventory_optimizer_summary.json", "forecast_research_summary.json"],
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        api,
+        "_compact_stakeholder_evidence",
+        lambda _raw: {
+            "inventory": {"source_population": "FreshRetailNet-LT", "empirical_fill_rate": 0.8},
+            "forecast": {"source_population": "FreshRetailNet-50K", "sample_series": 3000},
+        },
+    )
+
+    calls = []
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            content = "Inventory metric explanations." if len(calls) == 1 else "Forecast experiment comparisons."
+            usage = SimpleNamespace(
+                model_dump=lambda: {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 200,
+                    "total_tokens": 300,
+                }
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+                usage=usage,
+            )
+
+    class FakeGroq:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setitem(sys.modules, "groq", SimpleNamespace(Groq=FakeGroq))
+    result = api.generate_stakeholder_brief(
+        api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain all metrics.")
+    )
+
+    assert len(calls) == 2
+    assert "FreshRetailNet-LT" in calls[0]["messages"][1]["content"]
+    assert "FreshRetailNet-50K" in calls[1]["messages"][1]["content"]
+    assert calls[0]["max_completion_tokens"] == 1400
+    assert calls[1]["max_completion_tokens"] == 1400
+    assert "Inventory metric explanations." in result["brief_markdown"]
+    assert "Forecast experiment comparisons." in result["brief_markdown"]
+    assert result["generation_strategy"] == "two_part_groq"
+    assert result["usage"]["totals"]["total_tokens"] == 600
 
 
 
@@ -495,5 +558,15 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
     evidence = api._compact_stakeholder_evidence(raw)
     encoded = __import__("json").dumps(evidence, separators=(",", ":"))
     prompt_overhead = len(api._stakeholder_system_prompt()) + 1200
-    assert len(encoded) < 2200
-    assert prompt_overhead + len(encoded) < 5000
+    assert len(encoded) < 4000
+    parts = api._stakeholder_prompt_parts(
+        api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the findings."),
+        evidence, ["inventory_optimizer_summary.json", "forecast_research_summary.json"], [],
+    )
+    assert len(parts) == 2
+    assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
+    estimated_reserved_tokens = sum(
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 1400
+        for part in parts
+    )
+    assert estimated_reserved_tokens < 7000

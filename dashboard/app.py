@@ -65,12 +65,51 @@ h1, h2, h3, h4, p, label, li, span, div {
 }
 h1, h2, h3 { letter-spacing: -.025em; color: #f4f7fb; }
 h2 { margin-top: 1.35rem; }
+[data-testid="stMarkdownContainer"] {
+  font-size: 1.03rem;
+}
 [data-testid="stMarkdownContainer"] p,
 [data-testid="stCaptionContainer"], [data-testid="stAlert"] p {
-  line-height: 1.52;
+  line-height: 1.72;
+  font-size: 1.02rem;
   white-space: normal;
   overflow-wrap: anywhere;
   color: #c7d1dd;
+}
+[data-testid="stMarkdownContainer"] h1 {
+  font-size: clamp(1.8rem, 2.5vw, 2.35rem);
+  line-height: 1.25;
+  margin: 1.25rem 0 .8rem;
+}
+[data-testid="stMarkdownContainer"] h2 {
+  font-size: clamp(1.45rem, 2vw, 1.85rem);
+  line-height: 1.3;
+  margin: 1.65rem 0 .75rem;
+}
+[data-testid="stMarkdownContainer"] h3 {
+  font-size: 1.2rem;
+  line-height: 1.35;
+  margin: 1.25rem 0 .55rem;
+}
+[data-testid="stMarkdownContainer"] table {
+  width: 100% !important;
+  display: table;
+  table-layout: auto;
+  border-collapse: collapse;
+  font-size: .98rem;
+  line-height: 1.55;
+}
+[data-testid="stMarkdownContainer"] th,
+[data-testid="stMarkdownContainer"] td {
+  padding: .68rem .78rem !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+[data-testid="stMarkdownContainer"] li {
+  font-size: 1.01rem;
+  line-height: 1.65;
+  margin: .28rem 0;
 }
 [data-testid="stMarkdownContainer"] a { color: var(--frn-teal); }
 [data-testid="stMetric"] {
@@ -486,7 +525,22 @@ if active_page == "Stakeholder briefing":
                 + ", ".join(payload["missing_source_artifacts"])
             )
         st.markdown("---")
+        st.subheader("Full stakeholder explanation")
+        st.caption(
+            "This report is assembled from two separate Groq generations: inventory/service-level "
+            "interpretation, followed by forecasting experiments and model comparisons."
+        )
         st.markdown(payload.get("brief_markdown", "No brief content returned."))
+        usage = payload.get("usage", {})
+        totals = usage.get("totals", {}) if isinstance(usage, dict) else {}
+        if totals:
+            st.caption(
+                "Generation usage — "
+                + " · ".join(
+                    f"{key.replace('_', ' ')}: {value:,}"
+                    for key, value in totals.items()
+                )
+            )
         st.download_button(
             "Download briefing as Markdown",
             data=payload.get("brief_markdown", ""),

@@ -133,12 +133,11 @@ def _compact_bootstrap(payload: Any) -> dict[str, Any]:
 
 
 def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
-    """Build a very small board-level evidence snapshot for the Groq free tier."""
+    """Build separate inventory and forecasting evidence packs for two Groq calls."""
     inventory = raw.get("inventory_optimizer") or {}
     if not isinstance(inventory, Mapping):
         inventory = {}
 
-    # One policy scenario is enough for the narrative; keep the baseline trade-off.
     scenario_source = inventory.get("scenario_results", [])
     balanced = next(
         (
@@ -149,36 +148,40 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
     )
     scenarios = _compact_rows(
         [balanced] if isinstance(balanced, Mapping) else [],
-        ("scenario", "target_fill_rate", "empirical_fill_rate",
-         "theoretical_expected_fill_rate", "total_simulated_cost",
-         "capacity_limited_store_count", "store_count",
-         "mean_replenishment_utilization_pct"),
+        (
+            "scenario", "target_fill_rate", "empirical_fill_rate",
+            "theoretical_expected_fill_rate", "empirical_cycle_service_level",
+            "actual_protection_demand", "fulfilled_protection_demand",
+            "unfulfilled_protection_demand", "leftover_stock",
+            "holding_cost", "shortage_cost", "ordering_cost",
+            "total_simulated_cost", "theoretical_expected_cost_per_protection_period",
+            "capacity_limited_store_count", "service_target_met_store_count",
+            "service_target_met_empirically", "store_count", "store_product_series",
+            "evaluation_windows_per_series", "evaluation_windows",
+            "mean_storage_utilization_pct", "mean_replenishment_utilization_pct",
+        ),
         limit=1,
     )
 
-    capacity = []
-    for row in inventory.get("capacity_diagnostics", []):
-        if not isinstance(row, Mapping) or row.get("scenario") != "balanced_90pct":
-            continue
-        util = row.get("replenishment_utilization_pct", {})
-        if isinstance(util, Mapping):
-            capacity.append({
-                "scenario": "balanced_90pct",
-                "replenishment_p50_pct": util.get("p50"),
-                "replenishment_p95_pct": util.get("p95"),
-                "stores_at_95pct_or_more_pct": util.get("share_at_least_95_pct"),
-            })
-        break
+    capacity_source = inventory.get("capacity_diagnostics", [])
+    capacity_source = [
+        row for row in capacity_source
+        if isinstance(row, Mapping) and row.get("scenario") == "balanced_90pct"
+    ] if isinstance(capacity_source, list) else []
+    capacity = _compact_capacity(capacity_source[:1])
 
     segments_source = inventory.get("segment_results", [])
     segments_source = [
         row for row in segments_source
-        if isinstance(row, Mapping)
-        and row.get("scenario") == "balanced_90pct"
+        if isinstance(row, Mapping) and row.get("scenario") == "balanced_90pct"
     ] if isinstance(segments_source, list) else []
     segments = _compact_rows(
         segments_source,
-        ("segment_type", "segment", "empirical_fill_rate", "shortage_units"),
+        (
+            "segment_type", "segment", "stores", "series", "evaluation_windows",
+            "actual_demand", "fulfilled_demand", "empirical_fill_rate",
+            "shortage_units", "leftover_units", "simulated_cost",
+        ),
         limit=6,
     )
 
@@ -190,25 +193,61 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
     ] if isinstance(dist_rows, list) else []
     distributions = _compact_rows(
         dist_rows,
-        ("distribution", "median_mae", "central_80_coverage_pct"),
+        (
+            "distribution", "evaluation_windows", "median_mae",
+            "pinball_q10", "pinball_q50", "pinball_q90",
+            "central_80_coverage_pct", "central_80_mean_width", "median_bias_pct",
+        ),
         limit=3,
     )
 
     population = inventory.get("evaluation_population", {})
+    evaluation_design = inventory.get("evaluation_design", {})
     compact_inventory = {
+        "source_population": "FreshRetailNet-LT (external population; separate from FreshRetailNet-50K)",
         "population": _pick_fields(
             population,
-            ("target_date_start", "target_date_end", "target_dates",
-             "complete_continuous_series"),
+            (
+                "target_date_start", "target_date_end", "target_dates",
+                "complete_continuous_series", "total_series_with_any_prediction",
+            ),
         ),
         "calibration_windows_per_series": (
             inventory.get("calibration_design", {}).get("windows_per_series")
             if isinstance(inventory.get("calibration_design"), Mapping) else None
         ),
+        "evaluation_windows_per_series": (
+            evaluation_design.get("windows_per_series")
+            if isinstance(evaluation_design, Mapping) else None
+        ),
+        "target_definition": "Store-wide volume-weighted expected fill rate over a seven-day protection period",
         "scenario": scenarios[0] if scenarios else {},
         "capacity": capacity,
         "segments": segments,
+        "distribution_reference": (
+            dist.get("reference_optimizer_distribution")
+            if isinstance(dist, Mapping) else None
+        ),
+        "distribution_challengers": (
+            dist.get("challengers") if isinstance(dist, Mapping) else None
+        ),
+        "distribution_scored_on": (
+            dist.get("scored_on") if isinstance(dist, Mapping) else None
+        ),
         "distribution_scores": distributions,
+        "distribution_limitations": (
+            str(dist.get("limitations", ""))[:260] if isinstance(dist, Mapping) else ""
+        ),
+        "optimizer_objective": (
+            "Minimize expected holding cost + expected shortage cost + fixed ordering cost, "
+            "subject to service, storage, replenishment, MOQ, pack-size and SKU order-cap constraints."
+        ),
+        "cost_and_pack_assumptions": (
+            "Illustrative normalized assumptions, not retailer-measured economics or supplier pack data."
+        ),
+        "limitations": [
+            str(item)[:220] for item in inventory.get("limitations", [])[:6]
+        ] if isinstance(inventory.get("limitations"), list) else [],
     }
 
     forecast = raw.get("forecast_research") or {}
@@ -216,27 +255,53 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
         forecast = {}
     rolling = forecast.get("rolling_design", {})
     final = forecast.get("final_research_comparison", {})
+    methods = forecast.get("methods", {})
     if not isinstance(rolling, Mapping):
         rolling = {}
     if not isinstance(final, Mapping):
         final = {}
+    if not isinstance(methods, Mapping):
+        methods = {}
 
-    def metric_rows(source: Any, limit: int = 4) -> list[dict[str, Any]]:
-        selected = []
+    def metric_rows(source: Any) -> list[dict[str, Any]]:
         if not isinstance(source, list):
-            return selected
-        priority = ("baseline", "residual_corrected", "wavelet", "ensemble")
+            return []
+        priority = (
+            "baseline", "fourier_stl", "spectral", "wavelet",
+            "residual_corrected", "ensemble",
+        )
         by_name = {
             str(row.get("model")): row
             for row in source if isinstance(row, Mapping)
         }
-        for name in priority:
-            if name in by_name:
-                selected.append(_pick_fields(
-                    by_name[name], ("model", "mae", "rmse", "wape_pct", "bias_pct")
-                ))
-            if len(selected) >= limit:
-                break
+        selected = [
+            _pick_fields(
+                by_name[name],
+                ("model", "mae", "rmse", "wape_pct", "bias_pct"),
+            )
+            for name in priority if name in by_name
+        ]
+        baseline = next((row for row in selected if row.get("model") == "baseline"), None)
+        if isinstance(baseline, Mapping):
+            for row in selected:
+                if row.get("model") == "baseline":
+                    continue
+                improvements = {}
+                for metric in ("mae", "rmse", "wape_pct"):
+                    base_value = baseline.get(metric)
+                    model_value = row.get(metric)
+                    if (
+                        isinstance(base_value, (int, float))
+                        and isinstance(model_value, (int, float))
+                        and float(base_value) > 0
+                    ):
+                        improvements[metric] = round(
+                            (float(base_value) - float(model_value))
+                            / float(base_value) * 100.0,
+                            3,
+                        )
+                if improvements:
+                    row["improvement_vs_baseline_pct"] = improvements
         return selected
 
     weights = final.get("ensemble_weights", {})
@@ -244,33 +309,152 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
         weights = {}
     weights = {
         str(name): round(float(value), 3)
-        for name, value in list(weights.items())[:4]
+        for name, value in list(weights.items())[:6]
         if isinstance(value, (int, float))
     }
 
-    bootstrap = final.get("bootstrap_vs_baseline", {})
-    comparisons = bootstrap.get("comparisons_vs_baseline", {}) if isinstance(bootstrap, Mapping) else {}
-    residual = comparisons.get("residual_corrected", {}) if isinstance(comparisons, Mapping) else {}
-    mae_bootstrap = residual.get("mae", {}) if isinstance(residual, Mapping) else {}
-    residual_ci = _pick_fields(
-        mae_bootstrap,
-        ("mean_improvement_pct", "ci_95_low_pct", "ci_95_high_pct", "ci_excludes_zero"),
-    )
-
+    diversity = final.get("ensemble_diversity", {})
     compact_forecast = {
+        "source_population": "FreshRetailNet-50K",
         "sample_series": forecast.get("series_sample_size_complete"),
-        "rolling_metrics": metric_rows(rolling.get("pooled_test_metrics", []), limit=2),
+        "sample_policy": str(forecast.get("sample_policy", ""))[:220],
+        "seed": forecast.get("seed"),
+        "experiment": str(forecast.get("experiment", ""))[:240],
+        "rolling_design": {
+            "note": str(rolling.get("note", ""))[:300],
+            "warmup_days": rolling.get("warmup_days"),
+            "fold_count": len(rolling.get("folds", [])) if isinstance(rolling.get("folds"), list) else None,
+            "pooled_test_metrics": metric_rows(rolling.get("pooled_test_metrics", [])),
+        },
+        "validation_period": final.get("validation_period"),
         "evaluation_period": final.get("evaluation_period"),
-        "final_metrics": metric_rows(final.get("metrics", []), limit=4),
+        "final_metrics": metric_rows(final.get("metrics", [])),
         "ensemble_weights": weights,
-        "ensemble_effective_models": (
-            final.get("ensemble_diversity", {}).get("effective_model_count")
-            if isinstance(final.get("ensemble_diversity"), Mapping) else None
+        "ensemble_weight_cap": final.get("ensemble_weight_cap"),
+        "ensemble_diversity": _pick_fields(
+            diversity,
+            ("effective_model_count", "contributing_models", "max_weight"),
         ),
-        "residual_mae_bootstrap": residual_ci,
-        "promotion_status": str(final.get("status", ""))[:120],
+        "bootstrap_vs_baseline": _compact_bootstrap(
+            final.get("bootstrap_vs_baseline", {})
+        ),
+        "wavelet_ablation_vs_spectral": _compact_bootstrap(
+            final.get("wavelet_ablation_vs_spectral", {})
+        ),
+        "methods": _pick_fields(
+            methods,
+            ("fourier", "stl", "spectral", "wavelet", "residual_model", "ensemble"),
+        ),
+        "limitations": [
+            str(item)[:240] for item in forecast.get("limitations", [])[:7]
+        ] if isinstance(forecast.get("limitations"), list) else [],
+        "promotion_status": str(final.get("status", ""))[:180],
     }
     return {"inventory": compact_inventory, "forecast": compact_forecast}
+
+
+def _stakeholder_system_prompt() -> str:
+    return (
+        "You are a senior retail supply-chain and forecasting analytics advisor. "
+        "Use only supplied evidence; do not invent missing values. Explain every reported "
+        "metric in plain language and state how it is calculated or interpreted. Distinguish "
+        "targets, theoretical expectations, empirical outcomes, estimates and assumptions. "
+        "Lower forecast error is better; signed bias near zero is preferable. Positive bootstrap "
+        "improvement means lower error than the named baseline, and an interval crossing zero "
+        "is inconclusive. Never claim simulated costs are realized savings, expected fill is "
+        "achieved service, observed sales are latent demand, or a research challenger is "
+        "production-ready. Keep FreshRetailNet-LT inventory findings separate from "
+        "FreshRetailNet-50K forecasting findings. Write a detailed, readable Markdown report "
+        "for the requested audience, with explanatory headings, short paragraphs and compact "
+        "tables. End with actionable next steps and measurable acceptance tests."
+    )
+
+
+def _stakeholder_prompt_parts(
+    request: StakeholderBriefRequest,
+    evidence: dict[str, Any],
+    sources: list[str],
+    missing: list[str],
+) -> list[dict[str, str]]:
+    import json
+
+    inventory_payload = {
+        "part": "1 of 2: Inventory optimisation and service-level evidence",
+        "audience": request.audience,
+        "decision_focus": request.focus,
+        "source_artifacts": [
+            item for item in sources if "inventory_optimizer_summary" in item
+        ],
+        "missing_source_artifacts": [
+            item for item in missing if "inventory_optimizer_summary" in item
+        ],
+        "evidence": evidence.get("inventory", {}),
+        "required_coverage": [
+            "Open with a concise inventory-specific finding, not a generic executive paragraph.",
+            "Explain the evaluation population, horizon, calibration and later evaluation windows.",
+            "Define target fill rate, theoretical expected fill, empirical fill, empirical cycle service level, "
+            "the percentage-point service gap, replenishment and storage utilisation percentiles, "
+            "capacity-limited stores, segment shortage units, and every distribution score present.",
+            "Compare theoretical expected fill with empirical later-window fill. Explain why the gap matters.",
+            "Explain the balanced scenario and the capacity bottleneck, then interpret each store-size and "
+            "SKU-demand segment present in the evidence.",
+            "Explain the reference demand distribution and challenger distribution experiments, including "
+            "median MAE, pinball loss, central-80% coverage and interval width where supplied.",
+            "Explain simulated cost components only as illustrative normalized assumptions, never as realized savings.",
+            "End with limitations and 2-3 reversible operational/research next steps with owners and numeric acceptance tests.",
+        ],
+        "length_and_style": (
+            "Aim for 500-650 words. Use a short metric glossary table with columns Metric, Meaning, "
+            "How to read this result. Do not make a dense one-line summary or omit definitions."
+        ),
+    }
+    forecast_payload = {
+        "part": "2 of 2: Forecast research, model comparison and combined decisions",
+        "audience": request.audience,
+        "decision_focus": request.focus,
+        "source_artifacts": [
+            item for item in sources if "forecast_research_summary" in item
+        ],
+        "missing_source_artifacts": [
+            item for item in missing if "forecast_research_summary" in item
+        ],
+        "evidence": evidence.get("forecast", {}),
+        "required_coverage": [
+            "Explain the deterministic sample, chronological validation approach, three rolling seven-day folds, "
+            "original evaluation dates, and why the previously used seven-day period is not an untouched holdout.",
+            "Define MAE, RMSE, WAPE and signed bias, with clear directionality and formulas in plain language.",
+            "Compare every available model in both rolling results and final-period results; explicitly quantify "
+            "relative error reductions from improvement_vs_baseline_pct without implying business savings.",
+            "Explain Fourier/STL, spectral, wavelet, residual correction and validation-selected ensemble experiments.",
+            "Discuss paired bootstrap confidence intervals against baseline and the direct wavelet-versus-spectral "
+            "ablation. State which intervals exclude zero and which experiments are inconclusive.",
+            "Interpret ensemble weights and effective model count. Do not call it a diverse blend if only one model "
+            "has material weight or if effective model count indicates concentration.",
+            "Explain what is genuinely better, what is only promising, what failed to show added value, and why "
+            "the production baseline must remain until a later untouched temporal evaluation.",
+            "Close with a short integrated decision list, owners, measurable acceptance tests and limitations. "
+            "Explicitly state that forecast and inventory populations are separate and must not be pooled.",
+        ],
+        "length_and_style": (
+            "Aim for 550-700 words. Include a compact model-comparison table, a separate experiment/uncertainty "
+            "interpretation, and ranked recommendations. Avoid repeating the entire inventory glossary."
+        ),
+    }
+    return [
+        {
+            "title": "Inventory optimisation and service-level explanation",
+            "user_message": json.dumps(
+                inventory_payload, ensure_ascii=False, default=str, separators=(",", ":")
+            ),
+        },
+        {
+            "title": "Forecast experiments, model comparisons and decisions",
+            "user_message": json.dumps(
+                forecast_payload, ensure_ascii=False, default=str, separators=(",", ":")
+            ),
+        },
+    ]
+
 
 def _groq_http_exception(exc: Exception, model: str) -> HTTPException:
     """Translate Groq SDK failures into safe, actionable API responses."""
@@ -785,7 +969,7 @@ def forecast_quality_monitoring_time_exposure(limit: int = Query(5000, ge=1, le=
 
 @app.post("/api/v1/stakeholder/brief")
 def generate_stakeholder_brief(request: StakeholderBriefRequest):
-    """Generate a factual stakeholder narrative from current R2 research summaries."""
+    """Generate a detailed two-part stakeholder explanation using two bounded Groq calls."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -798,68 +982,106 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
             status_code=503,
             detail="No inventory or forecasting research reports are available in R2.",
         )
-    import json
     model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     try:
         from groq import Groq
 
         evidence = _compact_stakeholder_evidence(raw_evidence)
-        prompt = {
-            "audience": request.audience,
-            "focus": request.focus,
-            "evidence": evidence,
-            "available_source_artifacts": sources,
-            "missing_source_artifacts": missing,
-            "format": "Use 5 short headings: Executive takeaway; Evidence; Decisions (ranked, owner, measurable acceptance test); Risks/not ready to promote; Next validation.",
-            "max_words": 450,
-        }
-        client = Groq(api_key=api_key, timeout=45.0, max_retries=0)
-        user_message = json.dumps(prompt, ensure_ascii=False, default=str, separators=(",", ":"))
+        parts = _stakeholder_prompt_parts(request, evidence, sources, missing)
         system_message = _stakeholder_system_prompt()
-        prompt_characters = len(system_message) + len(user_message)
         max_prompt_characters = 5_000
-        if prompt_characters > max_prompt_characters:
+        max_completion_tokens = 1_400
+        prompt_sizes = [
+            len(system_message) + len(part["user_message"])
+            for part in parts
+        ]
+        oversized = [
+            size for size in prompt_sizes if size > max_prompt_characters
+        ]
+        estimated_reserved_tokens = sum(
+            int(math.ceil(size / 2.5)) + max_completion_tokens
+            for size in prompt_sizes
+        )
+        max_estimated_reserved_tokens = 7_000
+        if oversized or estimated_reserved_tokens > max_estimated_reserved_tokens:
             raise HTTPException(
                 status_code=413,
                 detail={
                     "code": "stakeholder_prompt_too_large",
                     "message": (
-                        f"The compact stakeholder prompt is {prompt_characters:,} characters; "
-                        f"the safe limit is {max_prompt_characters:,}."
+                        "The two-part stakeholder briefing exceeds the safe Groq request budget. "
+                        f"Part sizes: {prompt_sizes}; estimated reserved tokens: "
+                        f"{estimated_reserved_tokens:,}."
                     ),
-                    "prompt_characters": prompt_characters,
-                    "maximum_prompt_characters": max_prompt_characters,
-                    "estimated_input_tokens_upper_bound": int(math.ceil(prompt_characters / 2.5)),
+                    "prompt_characters_by_part": prompt_sizes,
+                    "maximum_prompt_characters_per_part": max_prompt_characters,
+                    "estimated_reserved_tokens": estimated_reserved_tokens,
+                    "maximum_estimated_reserved_tokens": max_estimated_reserved_tokens,
                     "action": (
-                        "The request was stopped before Groq to protect the 8,000 TPM allowance. "
-                        "The evidence pack has been reduced; inspect the prompt-size diagnostics if this recurs."
+                        "The report is split into two bounded calls. Reduce the requested focus or "
+                        "inspect the compact evidence fields before retrying; no Groq call was made."
                     ),
                 },
             )
-        request_options = {}
-        if model.startswith("openai/gpt-oss-"):
-            request_options["reasoning_effort"] = "low"
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=0.2,
-            max_completion_tokens=650,
-            **request_options,
+
+        client = Groq(api_key=api_key, timeout=60.0, max_retries=0)
+        generated_sections = []
+        usage_by_part = []
+        for index, part in enumerate(parts, start=1):
+            request_options = {}
+            if model.startswith("openai/gpt-oss-"):
+                request_options["reasoning_effort"] = "low"
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": part["user_message"]},
+                ],
+                temperature=0.2,
+                max_completion_tokens=max_completion_tokens,
+                **request_options,
+            )
+            content = completion.choices[0].message.content or ""
+            if not content.strip():
+                raise RuntimeError(f"Groq returned an empty section for part {index}.")
+            generated_sections.append(content.strip())
+            usage = getattr(completion, "usage", None)
+            usage_by_part.append(
+                usage.model_dump() if usage is not None else None
+            )
+
+        brief = (
+            "# FreshRetailNet Demand Intelligence — Stakeholder Report\n\n"
+            "## Part 1. Inventory optimisation and service-level evidence\n\n"
+            + generated_sections[0]
+            + "\n\n---\n\n"
+            + "## Part 2. Forecast research, model comparisons and decisions\n\n"
+            + generated_sections[1]
         )
-        brief = completion.choices[0].message.content or ""
-        if not brief.strip():
-            raise RuntimeError("Groq returned an empty stakeholder brief.")
-        usage = getattr(completion, "usage", None)
+        numeric_usage = [
+            item for item in usage_by_part if isinstance(item, Mapping)
+        ]
+        usage_totals = {}
+        for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            values = [
+                item.get(field) for item in numeric_usage
+                if isinstance(item.get(field), (int, float))
+            ]
+            if values:
+                usage_totals[field] = sum(values)
+        usage_summary = {
+            "parts": usage_by_part,
+            "totals": usage_totals,
+            "estimated_reserved_tokens": estimated_reserved_tokens,
+        }
         return {
             "brief_markdown": brief,
             "model": model,
+            "generation_strategy": "two_part_groq",
             "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "source_artifacts": sources,
             "missing_source_artifacts": missing,
-            "usage": usage.model_dump() if usage is not None else None,
+            "usage": usage_summary,
             "disclaimer": (
                 "AI-generated explanation of published research. Verify source metrics "
                 "and approve decisions with the responsible operational owner."
@@ -869,7 +1091,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         raise
     except Exception as exc:
         logger.exception(
-            "Stakeholder brief generation failed: exception_type=%s model=%s",
+            "Two-part stakeholder brief generation failed: exception_type=%s model=%s",
             type(exc).__name__,
             model,
         )
