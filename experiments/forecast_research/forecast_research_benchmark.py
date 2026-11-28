@@ -230,11 +230,14 @@ def origin_features(
     targets = target_rows[GROUP + ["date"]].copy()
     records = []
     histories = raw_panel[raw_panel["date"] < origin_date]
+    history_by_series = {
+        key: group.sort_values("date").tail(56)
+        for key, group in histories.groupby(GROUP, sort=False, observed=True)
+    }
     for (store_id, product_id), target_group in targets.groupby(GROUP, sort=False, observed=True):
-        hist = histories[
-            (histories["store_id"] == store_id) &
-            (histories["product_id"] == product_id)
-        ].sort_values("date").tail(56)
+        hist = history_by_series.get((store_id, product_id))
+        if hist is None:
+            hist = histories.iloc[0:0]
         values = hist["sale_amount"].to_numpy(dtype=float)
         hist_dates = pd.to_datetime(hist["date"]).to_numpy()
         stl_ok = 0.0
