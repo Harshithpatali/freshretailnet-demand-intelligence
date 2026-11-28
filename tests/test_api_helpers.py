@@ -416,10 +416,10 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
     assert len(parts) == 3
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 550
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 900
         for part in parts
     )
-    assert estimated_reserved_tokens < 6800
+    assert estimated_reserved_tokens < 7800
     assert all(len(part["user_message"]) < 5000 for part in parts)
     assert len(parts[0]["user_message"]) < 3000
     assert len(parts[1]["user_message"]) < 4000
@@ -524,7 +524,7 @@ def test_stakeholder_brief_generates_three_sections_and_combines_them(monkeypatc
     assert "FreshRetailNet-LT" in calls[0]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[1]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[2]["messages"][1]["content"]
-    assert all(call["max_completion_tokens"] == 550 for call in calls)
+    assert all(call["max_completion_tokens"] == 900 for call in calls)
     assert "Inventory metric explanations." in result["brief_markdown"]
     assert "Forecast model comparisons." in result["brief_markdown"]
     assert "Forecast uncertainty experiments." in result["brief_markdown"]
@@ -670,7 +670,7 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
     assert len(parts) == 3
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 550
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 900
         for part in parts
     )
-    assert estimated_reserved_tokens < 6800
+    assert estimated_reserved_tokens < 7800

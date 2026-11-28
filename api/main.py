@@ -1006,7 +1006,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         parts = _stakeholder_prompt_parts(request, evidence, sources, missing)
         system_message = _stakeholder_system_prompt()
         max_prompt_characters = 5_000
-        max_completion_tokens = 550
+        max_completion_tokens = 900
         prompt_sizes = [
             len(system_message) + len(part["user_message"])
             for part in parts
@@ -1018,7 +1018,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
             int(math.ceil(size / 2.5)) + max_completion_tokens
             for size in prompt_sizes
         )
-        max_estimated_reserved_tokens = 6_800
+        max_estimated_reserved_tokens = 7_800
         if oversized or estimated_reserved_tokens > max_estimated_reserved_tokens:
             raise HTTPException(
                 status_code=413,

@@ -68,6 +68,26 @@ def main() -> None:
     if absent_sections:
         raise RuntimeError(f"Generated report is missing sections: {absent_sections}")
 
+    sections = markdown.split("## Part ")[1:]
+    if len(sections) != 3:
+        raise RuntimeError(f"Expected three report sections, received {len(sections)}.")
+    short_sections = [
+        index for index, section in enumerate(sections, start=1)
+        if len(section.split()) < 220
+    ]
+    if short_sections:
+        raise RuntimeError(f"Generated sections appear truncated or too short: {short_sections}")
+    usage_parts = (result.get("usage") or {}).get("parts") or []
+    capped_parts = [
+        index for index, item in enumerate(usage_parts, start=1)
+        if isinstance(item, dict) and item.get("completion_tokens", 0) >= 880
+    ]
+    if capped_parts:
+        raise RuntimeError(
+            f"Groq reached the 900-token completion cap in sections {capped_parts}; "
+            "report may be truncated."
+        )
+
     report_path = Path("stakeholder-brief.md")
     report_path.write_text(markdown, encoding="utf-8")
     summary = {

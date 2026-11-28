@@ -1,4 +1,5 @@
 name: API and dashboard quality checks
+# Keep the offline test suite aligned with the live stakeholder briefing path.
 
 on:
   push:
