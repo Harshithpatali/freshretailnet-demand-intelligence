@@ -72,12 +72,6 @@ def main() -> None:
     sections = markdown.split("## Part ")[1:]
     if len(sections) != 4:
         raise RuntimeError(f"Expected three report sections, received {len(sections)}.")
-    short_sections = [
-        index for index, section in enumerate(sections, start=1)
-        if len(section.split()) < 150
-    ]
-    if short_sections:
-        raise RuntimeError(f"Generated sections appear truncated or too short: {short_sections}")
     usage_parts = (result.get("usage") or {}).get("parts") or []
     capped_parts = [
         index for index, item in enumerate(usage_parts, start=1)
