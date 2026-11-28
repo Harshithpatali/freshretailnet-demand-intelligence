@@ -129,9 +129,29 @@ freshness = {
     "Quantile forecast": quant.get("generated_at_utc"),
     "Stockout diagnostics": stock.get("generated_at_utc"),
 }
-tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation", "Dataset explorer", "Experiment lab", "Wavelet benchmark", "Forecast monitoring", "Demand censoring", "Inventory scenarios"])
+workspace_pages = {
+    "Overview": ["Executive overview"],
+    "Explore data": ["Dataset explorer"],
+    "Forecasting": ["Forecast explorer", "Uncertainty & calibration"],
+    "Availability & risk": ["Stockout diagnostics", "Forecast monitoring", "Demand censoring"],
+    "Inventory decisions": ["Inventory optimisation", "Inventory scenarios"],
+    "Experiments": ["Experiment lab", "Wavelet benchmark"],
+}
+st.sidebar.title("Navigation")
+st.sidebar.caption("Choose a task area, then open the page you need.")
+workspace = st.sidebar.selectbox("Workspace", list(workspace_pages), key="workspace_choice")
+active_page = st.sidebar.radio(
+    "Page",
+    workspace_pages[workspace],
+    key=f"workspace_page_{workspace}",
+)
+st.sidebar.divider()
+st.sidebar.caption(
+    "Start with the overview, explore the original data, then review forecasts "
+    "and operational decisions. Advanced experiments are grouped separately."
+)
 
-with tabs[0]:
+if active_page == "Executive overview":
     ev = point.get("evaluation", {})
     model = ev.get("model", {})
     baseline = ev.get("seasonal_naive_lag7", {})
@@ -163,7 +183,7 @@ with tabs[0]:
     compact_table(pd.DataFrame(freshness_rows), 160)
     st.info("All forecast targets are observed daily sales. They are not guaranteed to represent uncensored customer demand.")
 
-with tabs[1]:
+if active_page == "Forecast explorer":
     st.subheader("Evaluation forecast explorer")
     try:
         filters = get_json("/api/v1/filters")
@@ -226,7 +246,7 @@ with tabs[1]:
             st.error(f"Forecast query failed: {exc}")
 
 
-with tabs[2]:
+if active_page == "Uncertainty & calibration":
     st.subheader("Probabilistic forecast quality")
     v = quant.get("validation", {})
     e = quant.get("evaluation", {})
@@ -359,7 +379,7 @@ with tabs[2]:
         st.info("The forecast-time stockout-risk model and risk-decile calibration are not yet published.")
     st.warning("Global held-out coverage remains below the 80% nominal target in the existing benchmark. Read all exposure buckets with their sample sizes; intervals are not yet uniformly calibrated.")
 
-with tabs[3]:
+if active_page == "Stockout diagnostics":
     st.subheader("Stockout exposure and observed sales")
     c1,c2,c3 = st.columns(3)
     with c1: metric("Training rows", f'{stock.get("rows",0):,}')
@@ -388,7 +408,7 @@ with tabs[3]:
     st.caption(stock.get("interpretation","Descriptive association only."))
     st.caption(stock.get("hour_index_note","Hourly vector positions are indices; do not infer local-time labels."))
 
-with tabs[4]:
+if active_page == "Inventory optimisation":
     st.subheader("Inventory policy backtest")
     base = pd.DataFrame(inventory.get("base_policy_comparison", []))
     if not base.empty:
@@ -416,7 +436,7 @@ with tabs[4]:
     st.warning("Costs, lead time, review cadence and starting inventory are simulation assumptions. The short evaluation horizon and observed-sales proxy limit operational interpretation.")
 
 
-with tabs[5]:
+if active_page == "Dataset explorer":
     st.subheader("Explore the original FreshRetailNet dataset")
     st.caption(
         "A visual guide to the original train and evaluation data: all 19 source fields, "
@@ -762,7 +782,7 @@ with tabs[5]:
         st.error(f"Could not load the full dataset EDA report: {exc}")
 
 
-with tabs[6]:
+if active_page == "Experiment lab":
     st.subheader("Experiment lab")
     st.caption("Run a configurable, reproducible what-if inventory experiment on one held-out store-product series. Results are a small-sample simulation, not causal estimates or operational savings.")
     try:
@@ -893,13 +913,13 @@ with tabs[6]:
             st.warning("Interpretation limits: this experiment uses observed sales as a demand proxy, has a short evaluation horizon, and assumes deterministic lead time. It does not estimate causal effects or real-world savings. Orders arriving after the evaluation horizon are suppressed.")
 
 
-with tabs[7]:
+if active_page == "Wavelet benchmark":
     from wavelet_tab import render_wavelet_tab
     render_wavelet_tab(API, get_json, metric, compact_table)
 
 
 
-with tabs[8]:
+if active_page == "Forecast monitoring":
     st.subheader("Forecast quality monitoring")
     st.caption("Batch monitoring of the published evaluation predictions. Error and coverage are lagging metrics and require actual outcomes.")
     try:
@@ -979,7 +999,7 @@ with tabs[8]:
         st.warning(f"Monitoring artifacts are not published yet. Run the Forecast Quality and Drift Monitoring workflow. Details: {exc}")
 
 
-with tabs[9]:
+if active_page == "Demand censoring":
     st.subheader("Demand censoring sensitivity")
     st.caption("Observed sales during out-of-stock hours can understate demand. These are explicit imputation scenarios, not causal lost-sales estimates.")
     try:
@@ -1020,7 +1040,7 @@ with tabs[9]:
         st.warning(f"Demand-censoring artifacts are not published yet. Run the Demand Censoring Sensitivity workflow. Details: {exc}")
 
 
-with tabs[10]:
+if active_page == "Inventory scenarios":
     st.subheader("Inventory policy scenario grid")
     st.caption("Compare replenishment policies across lead times, review cycles, storage capacity, minimum order quantities and pack-size assumptions.")
     try:
