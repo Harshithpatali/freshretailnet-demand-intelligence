@@ -486,7 +486,7 @@ if active_page == "Stakeholder briefing":
                 response = requests.post(
                     f"{API}/api/v1/stakeholder/brief",
                     json={"audience": audience, "focus": focus},
-                    timeout=100,
+                    timeout=120,
                 )
                 response.raise_for_status()
                 st.session_state["stakeholder_brief_payload"] = response.json()

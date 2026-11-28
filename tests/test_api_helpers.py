@@ -413,16 +413,17 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
         api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the evidence."),
         compact, ["inventory_optimizer_summary.json", "forecast_research_summary.json"], [],
     )
-    assert len(parts) == 2
+    assert len(parts) == 3
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 1200
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 850
         for part in parts
     )
-    assert estimated_reserved_tokens < 7000
+    assert estimated_reserved_tokens < 6800
     assert all(len(part["user_message"]) < 5000 for part in parts)
-    assert len(parts[0]["user_message"]) < 3500
-    assert len(parts[1]["user_message"]) < 4500
+    assert len(parts[0]["user_message"]) < 3000
+    assert len(parts[1]["user_message"]) < 4000
+    assert len(parts[2]["user_message"]) < 3500
 
 
 def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
@@ -472,7 +473,7 @@ def test_stakeholder_brief_generates_two_sections_and_combines_them(monkeypatch)
     class FakeCompletions:
         def create(self, **kwargs):
             calls.append(kwargs)
-            content = "Inventory metric explanations." if len(calls) == 1 else "Forecast experiment comparisons."
+            content = ["Inventory metric explanations.", "Forecast model comparisons.", "Forecast uncertainty experiments."][len(calls) - 1]
             usage = SimpleNamespace(
                 model_dump=lambda: {
                     "prompt_tokens": 100,
@@ -494,15 +495,16 @@ def test_stakeholder_brief_generates_two_sections_and_combines_them(monkeypatch)
         api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain all metrics.")
     )
 
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert "FreshRetailNet-LT" in calls[0]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[1]["messages"][1]["content"]
-    assert calls[0]["max_completion_tokens"] == 1200
-    assert calls[1]["max_completion_tokens"] == 1200
+    assert "FreshRetailNet-50K" in calls[2]["messages"][1]["content"]
+    assert all(call["max_completion_tokens"] == 850 for call in calls)
     assert "Inventory metric explanations." in result["brief_markdown"]
-    assert "Forecast experiment comparisons." in result["brief_markdown"]
-    assert result["generation_strategy"] == "two_part_groq"
-    assert result["usage"]["totals"]["total_tokens"] == 600
+    assert "Forecast model comparisons." in result["brief_markdown"]
+    assert "Forecast uncertainty experiments." in result["brief_markdown"]
+    assert result["generation_strategy"] == "three_part_groq"
+    assert result["usage"]["totals"]["total_tokens"] == 900
 
 
 
@@ -635,15 +637,15 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
     }
     evidence = api._compact_stakeholder_evidence(raw)
     encoded = __import__("json").dumps(evidence, separators=(",", ":"))
-    assert len(encoded) < 7000  # Combined evidence is intentionally split into two Groq calls.
+    assert len(encoded) < 6800  # Combined evidence is intentionally split into two Groq calls.
     parts = api._stakeholder_prompt_parts(
         api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the findings."),
         evidence, ["inventory_optimizer_summary.json", "forecast_research_summary.json"], [],
     )
-    assert len(parts) == 2
+    assert len(parts) == 3
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 1200
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 850
         for part in parts
     )
-    assert estimated_reserved_tokens < 7000
+    assert estimated_reserved_tokens < 6800
