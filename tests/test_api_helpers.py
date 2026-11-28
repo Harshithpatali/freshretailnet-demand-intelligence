@@ -45,7 +45,10 @@ def test_schema_mismatch_is_reported_as_503():
 def test_health_reports_unconfigured_r2(monkeypatch):
     for name in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
         monkeypatch.delenv(name, raising=False)
-    assert api.health() == {"status": "ok", "r2_configured": False}
+    health = api.health()
+    assert health["status"] == "ok"
+    assert health["r2_configured"] is False
+    assert health["artifact_cache_ttl_seconds"] >= 1
 
 
 def test_forecast_simulation_handles_multiple_series():
