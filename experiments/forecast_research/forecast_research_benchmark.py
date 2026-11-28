@@ -765,6 +765,11 @@ def main():
             "baseline",
             [name for name in rolling_candidates if name != "baseline"],
         )
+        wavelet_ablation_bootstrap = two_way_bootstrap(
+            final_predictions,
+            "spectral",
+            ["wavelet"],
+        )
         final_weights = final_report["ensemble_weights_selected_on_validation_tail"]
         summary = {
             "project": "FreshRetailNet Demand Intelligence",
@@ -794,6 +799,7 @@ def main():
                 "metrics": final_metrics,
                 "ensemble_weights": final_weights,
                 "bootstrap_vs_baseline": bootstrap,
+                "wavelet_ablation_vs_spectral": wavelet_ablation_bootstrap,
                 "status": "research comparison on the repository's previously used seven-day holdout; not an untouched production promotion test",
             },
             "methods": {
@@ -850,6 +856,7 @@ def main():
             "final_metrics": final_metrics,
             "ensemble_weights": final_weights,
             "bootstrap": bootstrap,
+            "wavelet_ablation_vs_spectral": wavelet_ablation_bootstrap,
             "report_key": f"{OUT}/forecast_research_summary.json",
         }, indent=2, default=str), flush=True)
 
