@@ -15,6 +15,7 @@ from scripts.demand_censoring_sensitivity import apply_sensitivity
 from scripts.forecast_monitoring import build_monitoring_report, population_stability_index
 from scripts.inventory_scenario_backtest import run_scenarios
 from src.simulate_inventory import simulate
+from src.train_quantile_models import conditional_conformal_adjustments, calibrated_interval_by_group
 
 
 def test_censoring_sensitivity_bounds_and_zero_exposure():
@@ -163,3 +164,39 @@ def test_target_date_feature_audit_excludes_uncertified_dataset_flags():
     assert audit["dataset_target_date_flags_excluded"] == ["activity_flag", "holiday_flag"]
     assert "target_day_of_week" in audit["deterministic_target_date_features_used"]
     assert "publication time" in audit["excluded_reason"]
+
+
+
+def test_conditional_conformal_uses_prior_exposure_and_shrinks_small_groups():
+    y = np.concatenate([np.ones(100), np.full(100, 5.0)])
+    lower = np.zeros(200)
+    upper = np.zeros(200)
+    context = np.concatenate([np.zeros(100), np.full(100, 16.0)])
+    adjustments, audit = conditional_conformal_adjustments(
+        y, lower, upper, context, global_qhat=5.0,
+        min_group_rows=20, prior_strength_rows=100,
+    )
+    assert adjustments["0_hours"] == pytest.approx(3.0)
+    assert adjustments["16_hours"] == pytest.approx(5.0)
+    assert len(audit) == 6
+    assert next(row for row in audit if row["prior_exposure_group"] == "16_hours")["validation_rows"] == 100
+
+
+def test_conditional_interval_applies_historical_exposure_bucket_only():
+    predictions = {
+        0.10: np.zeros(2),
+        0.50: np.ones(2),
+        0.90: np.full(2, 2.0),
+    }
+    y = np.array([1.0, 5.0])
+    context = np.array([0.0, 16.0])
+    adjustments = {
+        "0_hours": 1.0, "1_2_hours": 1.0, "3_5_hours": 1.0,
+        "6_9_hours": 1.0, "10_15_hours": 1.0, "16_hours": 4.0,
+    }
+    summary, lower, upper = calibrated_interval_by_group(y, predictions, context, adjustments)
+    assert lower[0] == pytest.approx(0.0)
+    assert upper[0] == pytest.approx(3.0)
+    assert lower[1] == pytest.approx(0.0)
+    assert upper[1] == pytest.approx(6.0)
+    assert summary["context_feature"] == "stockout_hours_roll_max_7"
