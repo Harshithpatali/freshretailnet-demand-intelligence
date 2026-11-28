@@ -238,7 +238,7 @@ def test_later_holdout_gate_rejects_overlap_with_used_evaluation(monkeypatch):
 def test_later_holdout_gate_rejects_date_gaps(monkeypatch):
     monkeypatch.setattr("scripts.later_holdout_readiness.MIN_HOLDOUT_DAYS", 3)
     monkeypatch.setattr("scripts.later_holdout_readiness.MIN_SERIES_COVERAGE_PCT", 100.0)
-    frame = _later_holdout_frame()
+    frame = _later_holdout_frame(days=4)
     frame = frame.filter(pl.col("dt") != "2024-07-04")
     with pytest.raises(ValueError, match="contiguous daily window"):
         validate_later_holdout("2024-07-02", 2, frame)
