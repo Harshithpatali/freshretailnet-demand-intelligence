@@ -209,6 +209,10 @@ they do not require production credentials or assert that remote artifacts exist
 
 ## Extended validation and monitoring
 
+Verified batch reports:
+- [Forecast quality, interval coverage and drift monitoring](docs/results/forecast_monitoring.md)
+- [Demand-censoring sensitivity diagnostic](docs/results/demand_censoring_sensitivity.md)
+
 This repository now includes separate workflows for:
 - five-fold chronological demand-segment validation with expanding training windows;
 - post-hoc paired cluster bootstrap without re-training models;
