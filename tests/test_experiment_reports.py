@@ -15,6 +15,7 @@ from scripts.demand_censoring_sensitivity import apply_sensitivity
 from scripts.forecast_monitoring import build_monitoring_report, population_stability_index
 from scripts.inventory_scenario_backtest import run_scenarios
 from src.simulate_inventory import simulate
+from scripts.freshretailnet_lt_inventory_backtest import select_continuous_h1_predictions
 from src.train_quantile_models import conditional_conformal_adjustments, calibrated_interval_by_group
 from scripts.later_holdout_readiness import validate_later_holdout
 import polars as pl
@@ -242,3 +243,40 @@ def test_later_holdout_gate_rejects_date_gaps(monkeypatch):
     frame = frame.filter(pl.col("dt") != "2024-07-04")
     with pytest.raises(ValueError, match="contiguous daily window"):
         validate_later_holdout("2024-07-02", 2, frame)
+
+
+
+def test_freshretailnet_lt_inventory_uses_only_complete_continuous_series():
+    dates = pd.date_range("2025-05-01", periods=70, freq="D")
+    rows = []
+    for date in dates:
+        rows.append({
+            "store_id": "complete", "product_id": "p1", "horizon_days": 1, "fold": 1,
+            "target_date": date, "actual": 1.0, "baseline_prediction": 1.0,
+            "selected_prediction": 1.1, "calibrated_prediction": 1.05,
+        })
+    for date in dates[:-1]:
+        rows.append({
+            "store_id": "incomplete", "product_id": "p2", "horizon_days": 1, "fold": 1,
+            "target_date": date, "actual": 1.0, "baseline_prediction": 1.0,
+            "selected_prediction": 1.1, "calibrated_prediction": 1.05,
+        })
+    frame, audit = select_continuous_h1_predictions(pd.DataFrame(rows))
+    assert len(frame) == 70
+    assert frame["store_id"].nunique() == 1
+    assert frame["store_id"].iloc[0] == "complete"
+    assert audit["target_dates"] == 70
+    assert audit["complete_continuous_series"] == 1
+    assert audit["excluded_incomplete_series"] == 1
+
+
+def test_freshretailnet_lt_inventory_rejects_noncontiguous_target_dates():
+    dates = list(pd.date_range("2025-05-01", periods=70, freq="D"))
+    dates.remove(pd.Timestamp("2025-05-10"))
+    rows = [{
+        "store_id": "s1", "product_id": "p1", "horizon_days": 1, "fold": 1,
+        "target_date": date, "actual": 1.0, "baseline_prediction": 1.0,
+        "selected_prediction": 1.1, "calibrated_prediction": 1.05,
+    } for date in dates]
+    with pytest.raises(RuntimeError, match="not contiguous"):
+        select_continuous_h1_predictions(pd.DataFrame(rows))
