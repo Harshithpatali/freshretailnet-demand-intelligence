@@ -50,6 +50,10 @@ def simulate(frame, forecast_col, policy_label, lead_time, review_period, holdin
         raise ValueError("storage_capacity must be non-negative")
     if max_order_qty is not None and max_order_qty < 0:
         raise ValueError("max_order_qty must be non-negative")
+    if storage_capacity_days is not None and storage_capacity_days < 0:
+        raise ValueError("storage_capacity_days must be non-negative")
+    if max_order_qty_days is not None and max_order_qty_days < 0:
+        raise ValueError("max_order_qty_days must be non-negative")
     rows = []
     for (store, product), g in frame.groupby(["store_id", "product_id"], sort=False):
         g = g.sort_values("date").reset_index(drop=True)
