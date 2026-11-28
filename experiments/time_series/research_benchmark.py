@@ -318,10 +318,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="frn-timeseries-research-") as td:
         root = Path(td)
         raw_splits = {}
+        source_paths = {}
         for split, key in RAW.items():
             path = root / f"{split}.parquet"
             print(f"Downloading {key}")
             s3.download_file(bucket, key, str(path))
+            source_paths[split] = path
             raw_splits[split] = pl.read_parquet(path)
 
         series = raw_splits["train"].select(["store_id", "product_id"]).unique().to_pandas()
@@ -360,7 +362,6 @@ def main() -> None:
             "spectral": [c for c in frame.columns if c.startswith("spectral_")],
             "wavelet": [c for c in frame.columns if c.startswith("wavelet_")],
         }
-        key_cols = ["date", "store_id", "product_id", "sale_amount"]
         base_features = feature_families["base"]
         stl_fourier_features = base_features + feature_families["fourier"] + feature_families["stl"]
         spectral_no_wavelet_features = stl_fourier_features + feature_families["spectral"]
@@ -385,7 +386,6 @@ def main() -> None:
 
         categories = [c for c in CAT_COLUMNS if c in full_features]
         predictions: dict[str, dict[str, np.ndarray]] = {}
-        models = {}
         model_specs = [
             ("baseline_lightgbm", base_features),
             ("stl_fourier_lightgbm", stl_fourier_features),
@@ -398,7 +398,6 @@ def main() -> None:
             model, valid_pred, evaluation_pred = fit_lightgbm(
                 train, valid, evaluation, feature_cols, categories, name
             )
-            models[name] = model
             predictions[name] = {"validation": valid_pred, "evaluation": evaluation_pred}
 
         valid_fit_mask = valid["date"].isin(residual_fit_dates).to_numpy()
@@ -532,12 +531,8 @@ def main() -> None:
 
         # Data provenance records the raw source Parquet inputs used for comparison,
         # while source Parquet hashes are recorded by its stable R2 object key.
-        raw_train = root / "train.parquet"
-        raw_eval = root / "eval.parquet"
-        # Re-download files are available through the initial R2 objects and hashed by the
-        # artifact-provenance helper to provide immutable input references.
-        s3.download_file(bucket, RAW["train"], str(raw_train))
-        s3.download_file(bucket, RAW["eval"], str(raw_eval))
+        raw_train = source_paths["train"]
+        raw_eval = source_paths["eval"]
         output_keys = [
             f"{OUT}/timeseries_research_summary.json",
             f"{OUT}/timeseries_model_comparison.csv",
