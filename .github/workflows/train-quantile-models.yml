@@ -2,6 +2,10 @@ name: Train FreshRetailNet Quantile Forecasts
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "src/train_quantile_models.py"
+      - ".github/workflows/train-quantile-models.yml"
 
 permissions:
   contents: read
