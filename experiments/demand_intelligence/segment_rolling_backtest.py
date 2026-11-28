@@ -6,7 +6,7 @@ predictions only when its validation MAE beats the production LightGBM baseline
 by the configured margin. Test outcomes never influence routing decisions.
 """
 from __future__ import annotations
-import json, os, sys, tempfile
+import hashlib, json, os, sys, tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 import boto3, lightgbm as lgb, numpy as np, pandas as pd, polars as pl
@@ -24,6 +24,7 @@ GROUP=["store_id","product_id"]
 HORIZONS=(1,7,14)
 FOLDS=int(os.getenv("ROLLING_FOLDS","5"))
 BLOCK_DAYS=int(os.getenv("ROLLING_BLOCK_DAYS","7"))
+SERIES_LIMIT=int(os.getenv("BACKTEST_SERIES_LIMIT","0"))
 MIN_VALIDATION_GAIN_PCT=0.5
 MIN_TRAIN_DATES=56
 MIN_HURDLE_VALIDATION_POSITIVES=20
@@ -49,6 +50,39 @@ def score(y,p):
  return {"mae":float(np.mean(np.abs(y-p))),"rmse":float(np.sqrt(np.mean((y-p)**2))),
   "wape_pct":float(100*np.abs(y-p).sum()/max(np.abs(y).sum(),1e-9)),
   "bias_pct":float(100*(p-y).sum()/max(y.sum(),1e-9))}
+
+def restrict_to_eval_series(raw,limit):
+ """Optionally sample series deterministically from the official evaluation cohort."""
+ eval_pairs=raw["eval"].select(GROUP).unique().to_dicts()
+ source_count=len(eval_pairs)
+ if limit<=0 or source_count<=limit:
+  selected=eval_pairs
+ else:
+  selected=sorted(
+   eval_pairs,
+   key=lambda row:hashlib.sha256(
+    f"{row['store_id']}|{row['product_id']}".encode("utf-8")
+   ).hexdigest(),
+  )[:limit]
+ keys=pl.DataFrame(selected)
+ counts={}
+ for split in ("train","eval"):
+  before=raw[split].select(GROUP).unique().height
+  raw[split]=raw[split].join(keys,on=GROUP,how="semi")
+  counts[split]={"rows":raw[split].height,"series":raw[split].select(GROUP).unique().height,
+                 "source_series_before_filter":before}
+ canonical="\n".join(sorted(f"{row['store_id']}|{row['product_id']}" for row in selected))
+ audit={
+  "sampling_method":"sha256-ranked store-product pairs from official evaluation population",
+  "requested_series_limit":int(limit),
+  "source_evaluation_series":int(source_count),
+  "selected_series":int(len(selected)),
+  "selected_series_key_sha256":hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+  "split_counts":counts,
+ }
+ print(f"External population restriction: {len(selected):,} of {source_count:,} evaluation series")
+ return audit
+
 
 def add_segments(frame):
  frame=frame.sort(GROUP+["date"])
@@ -130,6 +164,7 @@ def main():
   for split,key in RAW_KEYS.items():
    p=root/f"{split}.parquet"; print(f"Downloading {key}")
    s3.download_file(bucket,key,str(p)); raw[split]=pl.read_parquet(p)
+  population_audit=restrict_to_eval_series(raw,SERIES_LIMIT)
   combined=pl.concat([raw["train"],raw["eval"]],how="diagonal_relaxed").sort(GROUP+["dt"])
   frame=add_segments(load_features_from_frame(combined))
   # Keep origin-date calendar fields intact for production-baseline parity.
@@ -344,7 +379,7 @@ def main():
     "baseline_wape_pct":base["wape_pct"],"selected_wape_pct":selected["wape_pct"]
    })
   uncertainty=[]  # populated by the separate post-hoc bootstrap workflow
-  report={"experiment":"multi-window rolling backtest with validation-gated segment specialists","dataset":DATASET_LABEL,
+  report={"experiment":"multi-window rolling backtest with validation-gated segment specialists","dataset":DATASET_LABEL,"population":population_audit,
    "fold_design":{"folds":FOLDS,"configured_test_block_days":BLOCK_DAYS,"validation_block_days":BLOCK_DAYS,
     "training":"expanding chronological history","test_windows_disjoint":True,"effective_test_block_days_by_horizon":{str(h):next(a["test_dates"] for a in audits if a["horizon_days"]==h and a["fold"]==1) for h in HORIZONS}},
    "selection_policy":{"metric":"segment validation MAE","minimum_gain_pct":MIN_VALIDATION_GAIN_PCT,
@@ -416,7 +451,7 @@ def main():
    "Five-Fold Segment Specialist Rolling Backtest",
    {"raw/train.parquet":root/"train.parquet","raw/eval.parquet":root/"eval.parquet"},
    str(pd.to_datetime(pdf.target_date).min().date()),str(pd.to_datetime(pdf.target_date).max().date()),
-   {"dataset_label":DATASET_LABEL,"train_key":RAW_KEYS["train"],"eval_key":RAW_KEYS["eval"],"folds":FOLDS,"test_block_days":BLOCK_DAYS,"horizons_days":list(HORIZONS),"validation_block_days":BLOCK_DAYS,
+   {"dataset_label":DATASET_LABEL,"train_key":RAW_KEYS["train"],"eval_key":RAW_KEYS["eval"],"series_population":population_audit,"folds":FOLDS,"test_block_days":BLOCK_DAYS,"horizons_days":list(HORIZONS),"validation_block_days":BLOCK_DAYS,
     "minimum_train_dates":MIN_TRAIN_DATES,"minimum_validation_mae_gain_pct":MIN_VALIDATION_GAIN_PCT,
     "calibration_prior_rows":CALIBRATION_PRIOR_ROWS,"seed":SEED,
     "target_calendar_policy":calendar_availability_audit},
