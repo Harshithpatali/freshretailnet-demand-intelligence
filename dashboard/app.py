@@ -134,8 +134,8 @@ workspace_pages = {
     "Explore data": ["Dataset explorer"],
     "Forecasting": ["Forecast explorer", "Uncertainty & calibration"],
     "Availability & risk": ["Stockout diagnostics", "Forecast monitoring", "Demand censoring"],
-    "Inventory decisions": ["Inventory optimisation", "Inventory scenarios"],
-    "Experiments": ["Experiment lab", "Wavelet benchmark"],
+    "Inventory decisions": ["Inventory optimisation", "Inventory scenarios", "Service-level optimizer"],
+    "Experiments": ["Experiment lab", "Wavelet benchmark", "Forecast research benchmark"],
 }
 st.sidebar.title("Navigation")
 st.sidebar.caption("Choose a task area, then open the page you need.")
@@ -1074,3 +1074,233 @@ if active_page == "Inventory scenarios":
         st.warning("All capacity, MOQ, pack-size, cost and lead-time values are simulation assumptions. Observed sales may be censored; these results are not measured operational savings.")
     except Exception as exc:
         st.warning(f"Inventory scenario artifacts are not published yet. Run the Inventory Lead-Time and Constraint Scenarios workflow. Details: {exc}")
+
+
+if active_page == "Service-level optimizer":
+    st.subheader("Service-level inventory decision engine")
+    st.caption(
+        "Store-level mixed-integer optimization of product replenishment quantities. "
+        "The optimizer balances expected shortage, holding and ordering costs while "
+        "respecting the selected fill-rate target and shared capacity limits."
+    )
+    try:
+        optimizer = get_json("/api/v1/inventory/optimizer")
+        population = optimizer.get("evaluation_population", {})
+        st.info(
+            "This experiment uses the separate FreshRetailNet-LT external population, "
+            "not the original FreshRetailNet-50K cohort. Costs, MOQ, pack size and capacity "
+            "are normalized illustrative assumptions."
+        )
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            metric("Continuous evaluation days", f"{population.get('target_dates', 0):,}")
+        with k2:
+            metric("Complete store-product series", f"{population.get('complete_continuous_series', 0):,}")
+        with k3:
+            metric("Calibration windows / SKU", "5")
+        with k4:
+            metric("Evaluation windows / SKU", "5")
+
+        scenario_results = pd.DataFrame(optimizer.get("scenario_results", []))
+        store_payload = get_json("/api/v1/inventory/optimizer/stores")
+        store_rows = pd.DataFrame(store_payload.get("rows", []))
+        if not scenario_results.empty:
+            st.markdown("#### Service-level and cost comparison")
+            display = scenario_results.copy()
+            display["theoretical_expected_fill_rate_pct"] = (
+                display["theoretical_expected_fill_rate"] * 100
+            )
+            display["empirical_fill_rate_pct"] = display["empirical_fill_rate"] * 100
+            summary_cols = [
+                "scenario", "target_fill_rate", "theoretical_expected_fill_rate_pct",
+                "empirical_fill_rate_pct", "empirical_cycle_service_level",
+                "total_simulated_cost", "capacity_limited_store_count",
+                "service_target_met_store_count",
+            ]
+            summary_cols = [column for column in summary_cols if column in display]
+            compact_table(display[summary_cols], 240)
+
+            fig = px.bar(
+                display, x="scenario",
+                y=["theoretical_expected_fill_rate_pct", "empirical_fill_rate_pct"],
+                barmode="group", title="Expected service target versus later realized fill rate",
+                labels={"value": "Fill rate (%)", "variable": "Measurement"},
+            )
+            fig.update_layout(height=370, xaxis_title="")
+            st.plotly_chart(fig, use_container_width=True)
+
+            chosen_scenario = st.selectbox(
+                "Inspect a capacity scenario",
+                display["scenario"].astype(str).tolist(),
+                key="inventory_optimizer_scenario",
+            )
+            selected_summary = display[display["scenario"].astype(str) == chosen_scenario].iloc[0]
+            s1, s2, s3 = st.columns(3)
+            with s1:
+                metric("Target fill rate", f"{selected_summary['target_fill_rate'] * 100:.1f}%")
+            with s2:
+                metric("Empirical fill rate", f"{selected_summary['empirical_fill_rate'] * 100:.1f}%")
+            with s3:
+                metric(
+                    "Stores where target was feasible",
+                    f"{int(selected_summary['service_target_met_store_count']):,} / {int(selected_summary['store_count']):,}",
+                )
+
+            if not store_rows.empty:
+                chosen_stores = store_rows[store_rows["scenario"].astype(str) == chosen_scenario].copy()
+                if not chosen_stores.empty:
+                    chosen_stores["achieved_fill_pct"] = pd.to_numeric(
+                        chosen_stores["achieved_fill_rate"], errors="coerce"
+                    ) * 100
+                    chosen_stores["target_fill_pct"] = pd.to_numeric(
+                        chosen_stores["target_fill_rate"], errors="coerce"
+                    ) * 100
+                    scatter = px.scatter(
+                        chosen_stores,
+                        x="storage_utilization_pct",
+                        y="achieved_fill_pct",
+                        color="service_target_met",
+                        hover_data=["store_id", "replenishment_utilization_pct", "expected_cost"],
+                        title="Store capacity utilization versus optimized expected fill rate",
+                        labels={
+                            "storage_utilization_pct": "Storage utilization (%)",
+                            "achieved_fill_pct": "Expected fill rate (%)",
+                            "service_target_met": "Target feasible",
+                        },
+                    )
+                    scatter.add_hline(
+                        y=float(selected_summary["target_fill_rate"]) * 100,
+                        line_dash="dash", annotation_text="Target service level",
+                    )
+                    scatter.update_layout(height=390)
+                    st.plotly_chart(scatter, use_container_width=True)
+                    compact_table(
+                        chosen_stores.sort_values("achieved_fill_pct").head(100)[
+                            [column for column in [
+                                "store_id", "status", "target_fill_pct", "achieved_fill_pct",
+                                "storage_utilization_pct", "replenishment_utilization_pct",
+                                "expected_shortage", "expected_cost",
+                            ] if column in chosen_stores]
+                        ],
+                        300,
+                    )
+            store_options = sorted(
+                store_rows["store_id"].astype(str).unique().tolist()
+            ) if not store_rows.empty else []
+            if store_options:
+                selected_store = st.selectbox(
+                    "Inspect product-level order recommendations",
+                    store_options,
+                    key="inventory_optimizer_store",
+                )
+                decisions = get_json(
+                    "/api/v1/inventory/optimizer/decisions",
+                    {"scenario": chosen_scenario, "store_id": selected_store, "limit": 2000},
+                )
+                decision_df = pd.DataFrame(decisions.get("rows", []))
+                if not decision_df.empty:
+                    cols = [
+                        column for column in [
+                            "product_id", "demand_mean", "demand_std", "inventory_position",
+                            "order_qty", "stock_position", "expected_fulfilled",
+                            "expected_shortage", "expected_leftover", "cycle_service_level",
+                            "expected_cost",
+                        ] if column in decision_df
+                    ]
+                    compact_table(decision_df[cols], 320)
+            st.warning(
+                "The theoretical fill-rate constraint is enforced in the optimizer, but actual "
+                "service is measured on five later non-overlapping seven-day periods. A gap is "
+                "useful evidence of calibration/model risk, not proof that the SLA is guaranteed."
+            )
+        else:
+            st.info("Inventory optimizer summary contains no scenario results yet.")
+    except Exception as exc:
+        st.warning(
+            "Inventory optimizer artifacts have not been published or the API cannot read them. "
+            "Run the Service-Level Inventory Decision Optimization workflow. Details: " + str(exc)
+        )
+
+
+if active_page == "Forecast research benchmark":
+    st.subheader("Advanced time-series research benchmark")
+    st.caption(
+        "Chronological comparisons of Fourier/STL features, spectral diagnostics, "
+        "wavelet ablation, residual correction and validation-selected model ensembles."
+    )
+    try:
+        research = get_json("/api/v1/forecast-research/summary")
+        rolling = pd.DataFrame(
+            get_json("/api/v1/forecast-research/rolling-comparison").get("rows", [])
+        )
+        final = pd.DataFrame(
+            get_json("/api/v1/forecast-research/final-comparison").get("rows", [])
+        )
+        st.info(
+            f"Deterministic sample: {research.get('series_sample_size_complete', 0):,} complete "
+            "store-product series. These are research-sample metrics, not full-population estimates."
+        )
+        if not rolling.empty:
+            st.markdown("#### Expanding-window rolling benchmark")
+            roll_fig = px.bar(
+                rolling, x="model", y="mae",
+                title="Pooled MAE across three chronological test windows",
+                hover_data=["rmse", "wape_pct", "bias_pct"],
+            )
+            roll_fig.update_layout(height=370, xaxis_title="", yaxis_title="MAE")
+            st.plotly_chart(roll_fig, use_container_width=True)
+            compact_table(rolling, 260)
+
+        if not final.empty:
+            st.markdown("#### Original seven-day evaluation comparison")
+            final_fig = px.bar(
+                final, x="model", y="mae",
+                title="Research model comparison on the original evaluation split",
+                hover_data=["rmse", "wape_pct", "bias_pct"],
+            )
+            final_fig.update_layout(height=370, xaxis_title="", yaxis_title="MAE")
+            st.plotly_chart(final_fig, use_container_width=True)
+            compact_table(final, 260)
+
+        final_design = research.get("final_research_comparison", {})
+        weights = final_design.get("ensemble_weights", {})
+        if weights:
+            st.markdown("#### Ensemble weights selected on validation data")
+            weight_df = pd.DataFrame(
+                [{"model": key, "weight": value} for key, value in weights.items()]
+            )
+            weight_fig = px.bar(
+                weight_df, x="model", y="weight",
+                title="Non-negative ensemble weights (sum to 1)",
+            )
+            weight_fig.update_layout(height=330, yaxis_title="Weight", xaxis_title="")
+            st.plotly_chart(weight_fig, use_container_width=True)
+            compact_table(weight_df, 200)
+
+        bootstrap = final_design.get("bootstrap_vs_baseline", {})
+        if bootstrap.get("comparisons_vs_baseline"):
+            st.markdown("#### Paired bootstrap uncertainty")
+            rows = []
+            for model_name, metrics in bootstrap["comparisons_vs_baseline"].items():
+                for metric_name, values in metrics.items():
+                    rows.append({
+                        "Model": model_name,
+                        "Metric": metric_name,
+                        "Mean improvement (%)": values.get("mean_improvement_pct"),
+                        "95% CI low (%)": values.get("ci_95_low_pct"),
+                        "95% CI high (%)": values.get("ci_95_high_pct"),
+                        "CI excludes zero": values.get("ci_excludes_zero"),
+                    })
+            compact_table(pd.DataFrame(rows), 320)
+
+        st.caption(
+            "Interpretation: Fourier and STL features are fixed-origin and history-only; "
+            "wavelet inputs are trailing and causal; ensemble weights are frozen from validation. "
+            "The seven-day source evaluation was already used in earlier project benchmarks, "
+            "so these figures are not a new independent production-promotion test."
+        )
+    except Exception as exc:
+        st.warning(
+            "Forecast research results are not published yet. Run the Forecast Research Benchmark "
+            "workflow. Details: " + str(exc)
+        )
