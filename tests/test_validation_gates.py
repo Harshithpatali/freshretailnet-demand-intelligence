@@ -16,12 +16,9 @@ from scripts.later_holdout_readiness import validate_later_holdout
 
 
 def make_later_frame(start="2024-07-03", days=14, series=3):
-    dates = pl.date_range(
-        pl.date(2024, 7, 3),
-        pl.date(2024, 7, 3) + pl.duration(days=days - 1),
-        interval="1d",
-        eager=True,
-    ).cast(pl.String).to_list()
+    from datetime import date, timedelta
+    start_date = date.fromisoformat(start)
+    dates = [(start_date + timedelta(days=offset)).isoformat() for offset in range(days)]
     rows = [
         {"store_id": f"s{idx}", "product_id": "p1", "dt": date, "sale_amount": 1.0,
          "hours_sale": [0.0] * 24, "hours_stock_status": [0] * 24}
