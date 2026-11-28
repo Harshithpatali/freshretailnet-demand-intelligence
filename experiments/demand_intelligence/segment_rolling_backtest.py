@@ -442,7 +442,8 @@ def main():
    "| Horizon | Metric | Baseline | Challenger | Improvement | 95% CI | Eval rows | Clusters | Folds |",
    "|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
   for row in comparison_rows:
-   comparison_md.append(f"| {row['horizon_days']}d | {row['metric']} | {row['baseline_value']:.4f} | {row['challenger_value']:.4f} | {row['improvement_point_estimate']:.4f} | [{row['ci_95_lower']:.4f}, {row['ci_95_upper']:.4f}] | {row['evaluation_rows']:,} | {row['store_product_clusters']:,} | {row['test_folds']} |")
+   ci_text=(f"[{row['ci_95_lower']:.4f}, {row['ci_95_upper']:.4f}]" if row["ci_95_lower"] is not None else "pending post-hoc job")
+   comparison_md.append(f"| {row['horizon_days']}d | {row['metric']} | {row['baseline_value']:.4f} | {row['challenger_value']:.4f} | {row['improvement_point_estimate']:.4f} | {ci_text} | {row['evaluation_rows']:,} | {row['store_product_clusters']:,} | {row['test_folds']} |")
   comparison_md += ["","**Interpretation:** positive MAE/RMSE/WAPE improvement favours the challenger; bias change is a signed percentage-point difference. Treat this as a research challenger until temporal validation is expanded."]
   report["comparison_sample_sizes"]=[{"horizon_days":int(h),"evaluation_rows":int(len(g)),
    "store_product_clusters":int(g[GROUP].astype(str).agg("::".join,axis=1).nunique()),
