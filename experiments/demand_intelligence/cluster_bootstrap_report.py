@@ -295,11 +295,15 @@ def main():
             (report_path, REPORT_KEY, "application/json"),
         ]
         for path, key, content_type in uploads:
-            s3.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": content_type})
-            size = s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
-            if size != path.stat().st_size:
-                raise RuntimeError(f"R2 verification failed for {key}")
-            print(f"Verified s3://{bucket}/{key} ({size:,} bytes)")
+            destinations = upload_versioned_artifact(s3, bucket, path, key, content_type, provenance)
+            print(f"Published stable and immutable copies: {destinations[0]} ; {destinations[1]}")
+        manifest_path = root / "segment_rolling_bootstrap_manifest.json"
+        manifest_path.write_text(json.dumps(provenance, indent=2, sort_keys=True))
+        upload_versioned_artifact(
+            s3, bucket, manifest_path,
+            f"{PREFIX}/segment_rolling_bootstrap_manifest.json",
+            "application/json", provenance,
+        )
         print(json.dumps(uncertainty, indent=2))
 
 
