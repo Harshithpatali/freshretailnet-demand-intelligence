@@ -11,14 +11,21 @@ API = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 
 st.markdown("""
 <style>
-.block-container {padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1500px;}
-[data-testid="stDataFrame"], [data-testid="stTable"] {width: 100%; overflow-x: auto;}
-[data-testid="stMetricValue"] {font-size: clamp(1.25rem, 4vw, 2rem);}
-@media (max-width: 640px) {
-  .block-container {padding-left: .8rem; padding-right: .8rem;}
-  h1 {font-size: 1.65rem !important;}
-  h2 {font-size: 1.25rem !important;}
+.block-container {padding: 1.25rem 1.4rem 2.5rem; max-width: 1480px;}
+[data-testid="stDataFrame"], [data-testid="stTable"] {width: 100%; overflow-x: auto; border-radius: 12px;}
+[data-testid="stMetric"] {background: var(--secondary-background-color); border: 1px solid rgba(128,128,128,.18); padding: 13px 15px; border-radius: 14px;}
+[data-testid="stMetricValue"] {font-size: clamp(1.25rem, 3vw, 2rem);}
+[data-testid="stTabs"] [role="tablist"] {gap: .35rem; border-bottom: 1px solid rgba(128,128,128,.20);}
+[data-testid="stTabs"] button[role="tab"] {border-radius: 10px 10px 0 0; padding: .55rem .9rem;}
+.stButton button, .stDownloadButton button, [data-testid="stFormSubmitButton"] button {border-radius: 11px; min-height: 2.7rem;}
+[data-baseweb="select"] > div {border-radius: 10px;}
+[data-testid="stVerticalBlockBorderWrapper"] {border-radius: 14px;}
+@media (max-width: 760px) {
+  .block-container {padding: .8rem .75rem 2rem;}
+  h1 {font-size: 1.6rem !important;}
+  h2 {font-size: 1.22rem !important;}
   h3 {font-size: 1.05rem !important;}
+  [data-testid="stMetric"] {padding: 10px;}
 }
 </style>
 """, unsafe_allow_html=True)
@@ -34,6 +41,49 @@ def metric(label, value, help_text=None):
 
 def compact_table(frame, height=300):
     st.dataframe(frame, use_container_width=True, hide_index=True, height=height)
+
+def select_store_product(prefix: str):
+    """Render searchable, dependent Store and Product dropdowns."""
+    try:
+        available = get_json("/api/v1/series/options")
+        store_ids = available.get("store_ids", [])
+        if not store_ids:
+            st.info("No store-product choices are available in the published forecast artifact.")
+            return None
+        with st.container(border=True):
+            st.markdown("**Choose a store and product**")
+            store_col, product_col = st.columns(2)
+            with store_col:
+                selected_store = st.selectbox(
+                    "Store",
+                    store_ids,
+                    key=f"{prefix}_store_dropdown",
+                    format_func=lambda value: f"Store {value}",
+                    help="Start typing a store ID to find it quickly.",
+                )
+            product_options = get_json(
+                "/api/v1/series/options", {"store_id": str(selected_store)}
+            ).get("product_ids", [])
+            with product_col:
+                if not product_options:
+                    st.warning("No evaluation products are available for this store.")
+                    return None
+                selected_product = st.selectbox(
+                    "Product",
+                    product_options,
+                    key=f"{prefix}_product_dropdown",
+                    format_func=lambda value: f"Product {value}",
+                    help="The product list updates when you change the store.",
+                )
+            st.caption(
+                f"Selected series: Store {selected_store} · Product {selected_product}. "
+                "Type inside a dropdown to search its choices."
+            )
+        return {"store_id": str(selected_store), "product_id": str(selected_product)}
+    except Exception as exc:
+        st.warning(f"Could not load Store/Product dropdown choices: {exc}")
+        return None
+
 
 st.title("FreshRetailNet Demand Intelligence")
 st.caption("Observed-sales forecasting · stockout diagnostics · probabilistic intervals · inventory policy simulation")
@@ -79,9 +129,29 @@ freshness = {
     "Quantile forecast": quant.get("generated_at_utc"),
     "Stockout diagnostics": stock.get("generated_at_utc"),
 }
-tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation", "SQL EDA", "Experiment lab", "Wavelet benchmark", "Forecast monitoring", "Demand censoring", "Inventory scenarios"])
+workspace_pages = {
+    "Overview": ["Executive overview"],
+    "Explore data": ["Dataset explorer"],
+    "Forecasting": ["Forecast explorer", "Uncertainty & calibration"],
+    "Availability & risk": ["Stockout diagnostics", "Forecast monitoring", "Demand censoring"],
+    "Inventory decisions": ["Inventory optimisation", "Inventory scenarios"],
+    "Experiments": ["Experiment lab", "Wavelet benchmark"],
+}
+st.sidebar.title("Navigation")
+st.sidebar.caption("Choose a task area, then open the page you need.")
+workspace = st.sidebar.selectbox("Workspace", list(workspace_pages), key="workspace_choice")
+active_page = st.sidebar.radio(
+    "Page",
+    workspace_pages[workspace],
+    key=f"workspace_page_{workspace}",
+)
+st.sidebar.divider()
+st.sidebar.caption(
+    "Start with the overview, explore the original data, then review forecasts "
+    "and operational decisions. Advanced experiments are grouped separately."
+)
 
-with tabs[0]:
+if active_page == "Executive overview":
     ev = point.get("evaluation", {})
     model = ev.get("model", {})
     baseline = ev.get("seasonal_naive_lag7", {})
@@ -113,86 +183,70 @@ with tabs[0]:
     compact_table(pd.DataFrame(freshness_rows), 160)
     st.info("All forecast targets are observed daily sales. They are not guaranteed to represent uncensored customer demand.")
 
-with tabs[1]:
+if active_page == "Forecast explorer":
     st.subheader("Evaluation forecast explorer")
     try:
         filters = get_json("/api/v1/filters")
     except Exception as exc:
         filters = None
         st.warning(f"Forecast filters are unavailable: {exc}")
-    if filters:
-        with st.form("forecast_series_search_form"):
-            search_store = st.text_input("Store ID contains", key="forecast_store_search_input")
-            search_product = st.text_input("Product ID contains", key="forecast_product_search_input")
-            search_submit = st.form_submit_button("Search store-product series")
-        if search_submit:
-            st.session_state["forecast_store_search"] = search_store.strip()
-            st.session_state["forecast_product_search"] = search_product.strip()
-            st.session_state["forecast_series_page"] = 1
-        search_page = st.number_input(
-            "Results page", min_value=1,
-            value=int(st.session_state.get("forecast_series_page", 1)),
-            step=1, key="forecast_series_page",
-        )
-        try:
-            series_result = get_json("/api/v1/series/search", {
-                "store_id": st.session_state.get("forecast_store_search", ""),
-                "product_id": st.session_state.get("forecast_product_search", ""),
-                "offset": (int(search_page) - 1) * 50,
-                "limit": 50,
-            })
-            series_options = series_result.get("rows", [])
-            st.caption(
-                f"{series_result.get('total', 0):,} matching series · "
-                f"showing page {int(search_page)} of "
-                f"{max(1, (series_result.get('total', 0) + 49) // 50)}"
-            )
-            if series_options:
-                labels = [f"Store {x['store_id']} · Product {x['product_id']}" for x in series_options]
-                selected = st.selectbox("Select a result on this page", range(len(labels)),
-                                        format_func=lambda i: labels[i], key="forecast_series_selection")
-                chosen = series_options[selected]
-                st.caption(f"Selected series: store {chosen['store_id']} / product {chosen['product_id']}")
-            else:
-                chosen = None
-                st.info("No series on this page. Change the search filters or select an earlier page.")
-        except Exception as exc:
-            chosen = None
-            st.warning(f"Server-side series search is unavailable: {exc}")
+    chosen = select_store_product("forecast") if filters else None
+    if not chosen:
+        st.info("Select a store and product above to view one series at a time.")
     else:
-        chosen = None
-    start = st.text_input("Start date (YYYY-MM-DD)", filters["dates"]["start"] if filters else "")
-    end = st.text_input("End date (YYYY-MM-DD)", filters["dates"]["end"] if filters else "")
-    params = {"limit":10000, "date_from":start, "date_to":end}
-    if chosen:
-        params["store_id"] = chosen["store_id"]
-        params["product_id"] = chosen["product_id"]
-    try:
-        if not filters:
-            raise RuntimeError("Forecast filter artifact is unavailable; republish quantile predictions.")
-        data = get_json("/api/v1/forecasts", params)
-        f = pd.DataFrame(data["rows"])
-        if f.empty:
-            st.warning("No rows match this series and date range.")
-        else:
-            f["date"] = pd.to_datetime(f["date"])
-            f = f.sort_values("date")
-            st.caption(f'Showing {len(f):,} of {data["total"]:,} matching rows.')
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=f["date"], y=f["p90_calibrated"], mode="lines", line={"width":0}, name="Calibrated upper", showlegend=False))
-            fig.add_trace(go.Scatter(x=f["date"], y=f["p10_calibrated"], mode="lines", line={"width":0}, fill="tonexty", fillcolor="rgba(31,119,180,0.18)", name="Calibrated P10–P90 band"))
-            fig.add_trace(go.Scatter(x=f["date"], y=f["actual_sale_amount"], mode="lines+markers", name="Observed sales"))
-            fig.add_trace(go.Scatter(x=f["date"], y=f["p50"], mode="lines+markers", name="P50 forecast"))
-            fig.update_layout(title="Observed sales, median forecast and calibrated interval",
-                              xaxis_title="Date", yaxis_title="Daily observed sales units",
-                              height=420, margin={"l":15,"r":15,"t":55,"b":15}, legend={"orientation":"h","y":-0.25})
-            st.plotly_chart(fig, use_container_width=True)
-            display_cols = [c for c in ["date","actual_sale_amount","p10","p50","p90","p10_calibrated","p90_calibrated","stock_hour6_22_cnt"] if c in f]
-            compact_table(f[display_cols], 300)
-    except Exception as exc:
-        st.error(f"Forecast query failed: {exc}")
+        start = st.text_input("Start date (YYYY-MM-DD)", filters["dates"]["start"] if filters else "")
+        end = st.text_input("End date (YYYY-MM-DD)", filters["dates"]["end"] if filters else "")
+        params = {
+            "limit": 10000, "date_from": start, "date_to": end,
+            "store_id": chosen["store_id"], "product_id": chosen["product_id"],
+        }
+        try:
+            if not filters:
+                raise RuntimeError("Forecast filter artifact is unavailable; republish quantile predictions.")
+            data = get_json("/api/v1/forecasts", params)
+            f = pd.DataFrame(data["rows"])
+            if f.empty:
+                st.warning("No observations match this store, product and date range.")
+            else:
+                f["date"] = pd.to_datetime(f["date"])
+                f = f.sort_values("date")
+                st.caption(f'Showing {len(f):,} of {data["total"]:,} observations for Store {chosen["store_id"]} · Product {chosen["product_id"]}.')
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=f["date"], y=f["p90_calibrated"], mode="lines",
+                    line={"width": 0}, name="Calibrated upper", showlegend=False,
+                ))
+                fig.add_trace(go.Scatter(
+                    x=f["date"], y=f["p10_calibrated"], mode="lines",
+                    line={"width": 0}, fill="tonexty",
+                    fillcolor="rgba(31,119,180,0.18)", name="Calibrated P10–P90 band",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=f["date"], y=f["actual_sale_amount"], mode="lines+markers",
+                    name="Observed sales",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=f["date"], y=f["p50"], mode="lines+markers", name="P50 forecast",
+                ))
+                fig.update_layout(
+                    title="Observed sales, median forecast and calibrated interval",
+                    xaxis_title="Date", yaxis_title="Normalized daily observed sales",
+                    height=420, margin={"l": 15, "r": 15, "t": 55, "b": 15},
+                    legend={"orientation": "h", "y": -0.25},
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                display_cols = [
+                    c for c in [
+                        "date", "actual_sale_amount", "p10", "p50", "p90",
+                        "p10_calibrated", "p90_calibrated", "stock_hour6_22_cnt",
+                    ] if c in f
+                ]
+                compact_table(f[display_cols], 300)
+        except Exception as exc:
+            st.error(f"Forecast query failed: {exc}")
 
-with tabs[2]:
+
+if active_page == "Uncertainty & calibration":
     st.subheader("Probabilistic forecast quality")
     v = quant.get("validation", {})
     e = quant.get("evaluation", {})
@@ -325,7 +379,7 @@ with tabs[2]:
         st.info("The forecast-time stockout-risk model and risk-decile calibration are not yet published.")
     st.warning("Global held-out coverage remains below the 80% nominal target in the existing benchmark. Read all exposure buckets with their sample sizes; intervals are not yet uniformly calibrated.")
 
-with tabs[3]:
+if active_page == "Stockout diagnostics":
     st.subheader("Stockout exposure and observed sales")
     c1,c2,c3 = st.columns(3)
     with c1: metric("Training rows", f'{stock.get("rows",0):,}')
@@ -354,7 +408,7 @@ with tabs[3]:
     st.caption(stock.get("interpretation","Descriptive association only."))
     st.caption(stock.get("hour_index_note","Hourly vector positions are indices; do not infer local-time labels."))
 
-with tabs[4]:
+if active_page == "Inventory optimisation":
     st.subheader("Inventory policy backtest")
     base = pd.DataFrame(inventory.get("base_policy_comparison", []))
     if not base.empty:
@@ -382,47 +436,353 @@ with tabs[4]:
     st.warning("Costs, lead time, review cadence and starting inventory are simulation assumptions. The short evaluation horizon and observed-sales proxy limit operational interpretation.")
 
 
-with tabs[5]:
-    st.subheader("SQL exploratory data analysis")
-    st.caption("Precomputed DuckDB SQL results over the training Parquet in R2. Select a query to inspect its SQL and result table.")
+if active_page == "Dataset explorer":
+    st.subheader("Explore the original FreshRetailNet dataset")
+    st.caption(
+        "A visual guide to the original train and evaluation data: all 19 source fields, "
+        "data quality, distributions, relationships, daily patterns and hourly signals."
+    )
     try:
-        eda = get_json("/api/v1/sql-eda")
-        st.caption(f"Engine: {eda.get('engine', 'DuckDB')} · Generated: {eda.get('generated_at_utc', 'unknown')} · Queries: {eda.get('query_count', 0)}")
-        query_items = eda.get("queries", [])
-        if query_items:
-            titles = [item["title"] for item in query_items]
-            selected_query = st.selectbox("EDA query", range(len(titles)), format_func=lambda i: titles[i])
-            item = query_items[selected_query]
-            st.markdown(f"**{item['title']}**")
-            st.code(item["sql"], language="sql")
-            result = pd.DataFrame(item.get("rows", []), columns=item.get("columns", []))
-            st.caption(f"{item.get('row_count_returned', len(result)):,} result rows")
-            compact_table(result, 380)
-            if not result.empty:
-                numeric = result.select_dtypes(include="number").columns.tolist()
-                if item["id"] == "daily_sales_trend" and "total_observed_sales" in numeric:
-                    fig = px.line(result, x="date", y="total_observed_sales", title="Daily total observed sales")
-                    fig.update_layout(height=360, margin={"l":15,"r":15,"t":55,"b":20})
+        eda = get_json("/api/v1/dataset-eda")
+        split = eda.get("split_overview", {})
+        combined = split.get("combined", {})
+        train_summary = split.get("train", {})
+        eval_summary = split.get("evaluation", {})
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            metric("Original observations", f"{int(combined.get('row_count', 0)):,}")
+        with c2:
+            metric("Source fields", f"{int(eda.get('feature_count', 0))}")
+        with c3:
+            metric("Stores", f"{int(combined.get('store_count', 0)):,}")
+        with c4:
+            metric("Store-product series", f"{int(combined.get('store_product_series', 0)):,}")
+
+        if eda.get("generated_at_utc"):
+            st.caption(f"Report generated (UTC): {eda['generated_at_utc']} · Includes both source splits")
+        st.info(eda.get("source_semantics", "Observed-sales EDA is descriptive; sales can be censored by stock availability."))
+
+        overview_tab, feature_tab, relationship_tab, hourly_tab = st.tabs(
+            ["Dataset overview", "Explore every feature", "Relationships & patterns", "Hourly signals"]
+        )
+
+        with overview_tab:
+            st.markdown("#### Train and evaluation coverage")
+            split_rows = []
+            for name, summary in (("Train", train_summary), ("Evaluation", eval_summary)):
+                split_rows.append({
+                    "Split": name,
+                    "Rows": summary.get("row_count"),
+                    "Cities": summary.get("city_count"),
+                    "Stores": summary.get("store_count"),
+                    "Products": summary.get("product_count"),
+                    "Store-product series": summary.get("store_product_series"),
+                    "Dates": summary.get("date_count"),
+                    "Start": summary.get("date_start"),
+                    "End": summary.get("date_end"),
+                    "Duplicate key excess": summary.get("duplicate_key_excess"),
+                })
+            compact_table(pd.DataFrame(split_rows), 135)
+
+            trend = pd.DataFrame(eda.get("daily_trend", []))
+            if not trend.empty:
+                trend["date"] = pd.to_datetime(trend["date"])
+                st.markdown("#### Daily sales pattern")
+                trend_fig = px.line(
+                    trend, x="date", y="total_observed_sales", color="split",
+                    markers=True, title="Total observed sales by day and source split",
+                    hover_data=["store_product_rows", "mean_observed_sales", "zero_sales_rate_pct"],
+                )
+                trend_fig.update_layout(height=370, xaxis_title="Date", yaxis_title="Normalized observed sales")
+                st.plotly_chart(trend_fig, use_container_width=True)
+                trend_metric = px.line(
+                    trend, x="date", y="zero_sales_rate_pct", color="split",
+                    title="Share of store-product rows with zero observed sales",
+                )
+                trend_metric.update_layout(height=320, yaxis_title="Zero-sales rows (%)")
+                st.plotly_chart(trend_metric, use_container_width=True)
+
+            st.markdown("#### Data quality across all original fields")
+            quality = pd.DataFrame(eda.get("data_quality", {}).get("features", []))
+            if not quality.empty:
+                quality["null_pct"] = pd.to_numeric(quality["null_pct"], errors="coerce")
+                quality = quality.rename(columns={
+                    "feature": "Source field", "label": "Field name",
+                    "kind": "Field type", "null_count": "Missing values",
+                    "null_pct": "Missing (%)", "distinct_count": "Distinct values",
+                })
+                compact_table(quality, 380)
+                if quality["Missing (%)"].fillna(0).max() == 0:
+                    st.success("No missing values were found in the profiled source fields.")
+                else:
+                    st.warning("Some source fields contain missing values. Review the field-level profile before modelling.")
+            st.caption(
+                f"Duplicate store-product-date key excess in the combined source: "
+                f"{int(eda.get('data_quality', {}).get('duplicate_key_excess', 0)):,}. "
+                "The report profiles the original fields before modelling feature engineering."
+            )
+
+            st.markdown("#### Original data dictionary")
+            catalog = pd.DataFrame(eda.get("feature_catalog", []))
+            if not catalog.empty:
+                compact_table(catalog.rename(columns={
+                    "name": "Source column", "label": "Friendly name",
+                    "group": "Feature group", "kind": "Data type", "description": "Meaning",
+                }), 430)
+
+        with feature_tab:
+            catalog = eda.get("feature_catalog", [])
+            if catalog:
+                by_label = {item["label"]: item["name"] for item in catalog}
+                selected_label = st.selectbox(
+                    "Select a source feature",
+                    list(by_label.keys()),
+                    key="full_eda_feature_choice",
+                    help="Search by typing a field name, or browse the feature groups below.",
+                )
+                feature_name = by_label[selected_label]
+                feature_info = next(item for item in catalog if item["name"] == feature_name)
+                profile = eda.get("profiles", {}).get(feature_name, {})
+                st.markdown(f"#### {selected_label}")
+                st.caption(f"{feature_info['group']} · {feature_info['description']}")
+
+                a, b, c = st.columns(3)
+                with a:
+                    metric("Missing values", f"{int(profile.get('null_count', 0)):,}",
+                           f"{profile.get('null_pct', 0):.3f}% of combined rows")
+                with b:
+                    metric("Distinct values", f"{int(profile.get('distinct_count', 0) or 0):,}"
+                           if profile.get("distinct_count") is not None else "Not applicable")
+                with c:
+                    metric("Field type", feature_info["kind"].replace("_", " ").title())
+
+                if feature_info["kind"] in ("numeric", "target"):
+                    stat_cols = st.columns(5)
+                    stat_values = [
+                        ("Minimum", "min"), ("25th percentile", "p25"),
+                        ("Median", "median"), ("75th percentile", "p75"), ("Maximum", "max"),
+                    ]
+                    for column, (label, field) in zip(stat_cols, stat_values):
+                        value = profile.get(field)
+                        with column:
+                            metric(label, f"{value:,.3f}" if isinstance(value, (int, float)) and value is not None else "N/A")
+                    histogram = pd.DataFrame(profile.get("histogram", []))
+                    if not histogram.empty:
+                        histogram["range"] = histogram.apply(
+                            lambda row: f"{row['bin_start']:.3g} – {row['bin_end']:.3g}", axis=1
+                        )
+                        histogram_fig = px.bar(
+                            histogram, x="range", y="count",
+                            title=f"Distribution of {selected_label}",
+                            labels={"range": "Value range", "count": "Observations"},
+                        )
+                        histogram_fig.update_layout(height=370, xaxis_tickangle=-35)
+                        st.plotly_chart(histogram_fig, use_container_width=True)
+                    st.caption(
+                        f"Mean: {profile.get('mean', float('nan')):.4g} · "
+                        f"Standard deviation: {profile.get('std', float('nan')):.4g} · "
+                        f"1st–99th percentile: {profile.get('p01', float('nan')):.4g} to {profile.get('p99', float('nan')):.4g}"
+                    )
+                elif feature_info["kind"] in ("identifier", "binary"):
+                    top_values = pd.DataFrame(profile.get("top_values", []))
+                    if not top_values.empty:
+                        top_values["value"] = top_values["value"].astype(str)
+                        fig = px.bar(
+                            top_values.sort_values("count"), x="count", y="value",
+                            orientation="h", title=f"Most frequent values in {selected_label}",
+                            labels={"count": "Rows", "value": "Encoded value"},
+                            text="count",
+                        )
+                        fig.update_layout(height=390, yaxis_title="")
+                        st.plotly_chart(fig, use_container_width=True)
+                        compact_table(top_values, 280)
+                    st.caption(
+                        "IDs are encoded categories, not measured quantities. Their numeric order "
+                        "does not imply a higher or lower business value."
+                    )
+                elif feature_info["kind"] == "date":
+                    st.write({
+                        "First date": profile.get("min"),
+                        "Last date": profile.get("max"),
+                        "Distinct dates": profile.get("distinct_count"),
+                    })
+                elif feature_info["kind"] == "vector":
+                    st.markdown("**24-hour sequence diagnostics**")
+                    v1, v2, v3 = st.columns(3)
+                    with v1:
+                        metric("Shortest vector", str(profile.get("min_length", "N/A")))
+                    with v2:
+                        metric("Average vector length", f"{profile.get('mean_length', float('nan')):.2f}")
+                    with v3:
+                        metric("Longest vector", str(profile.get("max_length", "N/A")))
+                    st.info(
+                        "This field contains one value per hour. Use the Hourly signals tab "
+                        "to compare the full 24-position profile across train and evaluation."
+                    )
+            else:
+                st.info("The feature catalog is not included in the published EDA report.")
+
+        with relationship_tab:
+            st.markdown("#### Numeric relationships")
+            correlations = eda.get("correlations", {})
+            corr_fields = correlations.get("fields", [])
+            corr_matrix = correlations.get("matrix", [])
+            if corr_fields and corr_matrix:
+                corr_df = pd.DataFrame(corr_matrix, index=corr_fields, columns=corr_fields)
+                corr_fig = px.imshow(
+                    corr_df, text_auto=".2f", zmin=-1, zmax=1,
+                    color_continuous_scale="RdBu_r", origin="lower",
+                    title="Correlation between numeric source features",
+                    labels={"color": "Correlation"},
+                )
+                corr_fig.update_layout(height=520)
+                st.plotly_chart(corr_fig, use_container_width=True)
+                st.caption("Correlation describes linear association; it does not establish causality.")
+
+            left, right = st.columns(2)
+            weekday = pd.DataFrame(eda.get("weekday_profile", []))
+            with left:
+                if not weekday.empty:
+                    fig = px.bar(
+                        weekday, x="weekday", y="mean_observed_sales",
+                        title="Mean observed sales by weekday",
+                        hover_data=["observations", "median_observed_sales", "zero_sales_rate_pct"],
+                    )
+                    fig.update_layout(height=350, xaxis_title="")
                     st.plotly_chart(fig, use_container_width=True)
-                elif item["id"] in ("top_stores", "top_products") and "total_observed_sales" in numeric:
-                    category = "store_id" if "store_id" in result else "product_id"
-                    fig = px.bar(result.sort_values("total_observed_sales"), x="total_observed_sales", y=category, orientation="h", title=item["title"])
-                    fig.update_layout(height=460, margin={"l":15,"r":15,"t":55,"b":20})
+            calendar = pd.DataFrame(eda.get("calendar_profile", []))
+            with right:
+                if not calendar.empty:
+                    calendar["calendar_group"] = calendar.apply(
+                        lambda row: f"Holiday {int(row['holiday_flag'])} · Activity {int(row['activity_flag'])}",
+                        axis=1,
+                    )
+                    fig = px.bar(
+                        calendar, x="calendar_group", y="mean_observed_sales",
+                        title="Observed sales by calendar flags",
+                        hover_data=["observations", "median_observed_sales", "zero_sales_rate_pct"],
+                    )
+                    fig.update_layout(height=350, xaxis_title="", xaxis_tickangle=-25)
                     st.plotly_chart(fig, use_container_width=True)
-                elif item["id"] == "weekday_pattern" and "mean_observed_sales" in numeric:
-                    fig = px.bar(result, x="weekday", y="mean_observed_sales", title="Mean observed sales by weekday")
-                    fig.update_layout(height=360, margin={"l":15,"r":15,"t":55,"b":20})
+
+            discount = pd.DataFrame(eda.get("discount_profile", []))
+            stockout = pd.DataFrame(eda.get("stockout_profile", []))
+            left, right = st.columns(2)
+            with left:
+                if not discount.empty:
+                    fig = px.bar(
+                        discount, x="discount_band", y="mean_observed_sales",
+                        title="Observed sales by discount band",
+                        hover_data=["observations", "mean_discount_factor"],
+                    )
+                    fig.update_layout(height=350, xaxis_title="")
                     st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No SQL EDA results have been published yet. Run the FreshRetailNet SQL EDA workflow in GitHub Actions.")
-        st.info(eda.get("source_semantics", "Observed sales may be censored by stock availability; this is descriptive EDA."))
-    except requests.HTTPError:
-        st.warning("SQL EDA results are not published yet. Run the FreshRetailNet SQL EDA workflow in GitHub Actions, then refresh this page.")
+            with right:
+                if not stockout.empty:
+                    fig = px.bar(
+                        stockout, x="exposure_band", y="mean_observed_sales",
+                        title="Observed sales by stockout exposure",
+                        hover_data=["observations", "mean_stockout_hours", "zero_sales_rate_pct"],
+                    )
+                    fig.update_layout(height=350, xaxis_title="")
+                    st.plotly_chart(fig, use_container_width=True)
+
+            store_df = pd.DataFrame(eda.get("top_stores", []))
+            product_df = pd.DataFrame(eda.get("top_products", []))
+            left, right = st.columns(2)
+            with left:
+                if not store_df.empty:
+                    fig = px.bar(
+                        store_df.sort_values("total_observed_sales"),
+                        x="total_observed_sales", y="store_id", orientation="h",
+                        title="Top stores by observed sales",
+                    )
+                    fig.update_layout(height=430, yaxis_title="")
+                    st.plotly_chart(fig, use_container_width=True)
+            with right:
+                if not product_df.empty:
+                    fig = px.bar(
+                        product_df.sort_values("total_observed_sales"),
+                        x="total_observed_sales", y="product_id", orientation="h",
+                        title="Top products by observed sales",
+                    )
+                    fig.update_layout(height=430, yaxis_title="")
+                    st.plotly_chart(fig, use_container_width=True)
+
+            categories = pd.DataFrame(eda.get("category_profile", []))
+            if not categories.empty:
+                st.markdown("#### Product hierarchy")
+                compact_table(categories, 300)
+
+            st.warning(
+                "These are descriptive comparisons. Sales can be censored by product availability, "
+                "and differences across discounts, weather or calendar groups are not causal effects."
+            )
+
+        with hourly_tab:
+            st.markdown("#### Hourly observed-sales profile")
+            hourly_sales = pd.DataFrame(eda.get("hourly_sales", []))
+            if not hourly_sales.empty:
+                sales_fig = px.line(
+                    hourly_sales, x="hour_index", y="mean_hourly_sales",
+                    color="split", markers=True,
+                    title="Average normalized observed sales at each hourly position",
+                    hover_data=["observations", "median_hourly_sales", "zero_hour_rate_pct"],
+                )
+                sales_fig.update_layout(height=380, xaxis_title="Hour index (0–23)", yaxis_title="Mean normalized sales")
+                st.plotly_chart(sales_fig, use_container_width=True)
+                zero_fig = px.line(
+                    hourly_sales, x="hour_index", y="zero_hour_rate_pct",
+                    color="split", markers=True,
+                    title="Zero-sales share by hourly position",
+                )
+                zero_fig.update_layout(height=330, xaxis_title="Hour index (0–23)", yaxis_title="Zero-sales hours (%)")
+                st.plotly_chart(zero_fig, use_container_width=True)
+
+            st.markdown("#### Hourly stock-status profile")
+            hourly_status = pd.DataFrame(eda.get("hourly_status", []))
+            if not hourly_status.empty:
+                status_fig = px.line(
+                    hourly_status, x="hour_index", y="mean_status_value",
+                    color="split", markers=True,
+                    title="Average stock-status value by hourly position",
+                    hover_data=["observations", "value_one_pct"],
+                )
+                status_fig.update_layout(height=360, xaxis_title="Hour index (0–23)", yaxis_title="Mean encoded status")
+                st.plotly_chart(status_fig, use_container_width=True)
+                st.caption(
+                    "The source stores 24 hourly positions. The chart retains the source's zero-based "
+                    "hour indices; confirm time-zone alignment before translating an index into local clock time."
+                )
+        with st.expander("Advanced: inspect the precomputed SQL queries"):
+            try:
+                sql_eda = get_json("/api/v1/sql-eda")
+                query_items = sql_eda.get("queries", [])
+                if query_items:
+                    titles = [item["title"] for item in query_items]
+                    selected_query = st.selectbox(
+                        "SQL query", range(len(titles)),
+                        format_func=lambda index: titles[index],
+                        key="advanced_sql_query_choice",
+                    )
+                    item = query_items[selected_query]
+                    st.code(item["sql"], language="sql")
+                    result = pd.DataFrame(item.get("rows", []), columns=item.get("columns", []))
+                    compact_table(result, 260)
+                else:
+                    st.info("No precomputed SQL results are published yet.")
+            except Exception as exc:
+                st.caption(f"Advanced SQL output is unavailable: {exc}")
+    except requests.HTTPError as exc:
+        st.warning(
+            "The full dataset EDA report is not published yet. Run the Full Dataset EDA workflow "
+            "from GitHub Actions, then refresh this page. Details: " + str(exc)
+        )
     except Exception as exc:
-        st.error(f"Could not load SQL EDA results: {exc}")
+        st.error(f"Could not load the full dataset EDA report: {exc}")
 
 
-with tabs[6]:
+if active_page == "Experiment lab":
     st.subheader("Experiment lab")
     st.caption("Run a configurable, reproducible what-if inventory experiment on one held-out store-product series. Results are a small-sample simulation, not causal estimates or operational savings.")
     try:
@@ -430,40 +790,20 @@ with tabs[6]:
     except Exception as exc:
         exp_filters = {}
         st.warning(f"Experiment inputs are unavailable: {exc}")
-    if exp_filters:
-        with st.form("experiment_series_search_form"):
-            exp_store_search = st.text_input("Store ID contains", key="experiment_store_search_input")
-            exp_product_search = st.text_input("Product ID contains", key="experiment_product_search_input")
-            exp_search_submit = st.form_submit_button("Search experimental series")
-        if exp_search_submit:
-            st.session_state["experiment_store_search"] = exp_store_search.strip()
-            st.session_state["experiment_product_search"] = exp_product_search.strip()
-            st.session_state["experiment_series_page"] = 1
-        exp_page = st.number_input(
-            "Experimental series page", min_value=1,
-            value=int(st.session_state.get("experiment_series_page", 1)),
-            step=1, key="experiment_series_page",
-        )
-        try:
-            exp_series_result = get_json("/api/v1/series/search", {
-                "store_id": st.session_state.get("experiment_store_search", ""),
-                "product_id": st.session_state.get("experiment_product_search", ""),
-                "offset": (int(exp_page) - 1) * 50, "limit": 50,
-            })
-            exp_series = exp_series_result.get("rows", [])
-        except Exception as exc:
-            exp_series = []
-            st.warning(f"Server-side experiment series search failed: {exc}")
+    exp_chosen = select_store_product("experiment") if exp_filters else None
+    if exp_chosen:
+        selected_series_key = f"{exp_chosen['store_id']}::{exp_chosen['product_id']}"
+        if st.session_state.get("freshretail_experiment_series_key") != selected_series_key:
+            for state_key in (
+                "freshretail_last_experiment",
+                "freshretail_last_experiment_curves",
+                "freshretail_last_experiment_config",
+            ):
+                st.session_state.pop(state_key, None)
+            st.session_state["freshretail_experiment_series_key"] = selected_series_key
+    if not exp_chosen:
+        st.info("Choose a store and product above to configure an inventory experiment.")
     else:
-        exp_series = []
-    if not exp_series:
-        st.warning("No matching evaluation series. Search with a different store or product ID.")
-        exp_chosen = None
-    else:
-        exp_labels = [f"Store {x['store_id']} · Product {x['product_id']}" for x in exp_series]
-        exp_idx = st.selectbox("Experimental series (current page)", range(len(exp_labels)),
-                               format_func=lambda i: exp_labels[i], key="exp_series")
-        exp_chosen = exp_series[exp_idx]
         p1, p2, p3 = st.columns(3)
         with p1:
             lead_days = st.number_input("Lead time (days)", min_value=1, max_value=7, value=1, step=1)
@@ -573,13 +913,13 @@ with tabs[6]:
             st.warning("Interpretation limits: this experiment uses observed sales as a demand proxy, has a short evaluation horizon, and assumes deterministic lead time. It does not estimate causal effects or real-world savings. Orders arriving after the evaluation horizon are suppressed.")
 
 
-with tabs[7]:
+if active_page == "Wavelet benchmark":
     from wavelet_tab import render_wavelet_tab
     render_wavelet_tab(API, get_json, metric, compact_table)
 
 
 
-with tabs[8]:
+if active_page == "Forecast monitoring":
     st.subheader("Forecast quality monitoring")
     st.caption("Batch monitoring of the published evaluation predictions. Error and coverage are lagging metrics and require actual outcomes.")
     try:
@@ -659,7 +999,7 @@ with tabs[8]:
         st.warning(f"Monitoring artifacts are not published yet. Run the Forecast Quality and Drift Monitoring workflow. Details: {exc}")
 
 
-with tabs[9]:
+if active_page == "Demand censoring":
     st.subheader("Demand censoring sensitivity")
     st.caption("Observed sales during out-of-stock hours can understate demand. These are explicit imputation scenarios, not causal lost-sales estimates.")
     try:
@@ -700,7 +1040,7 @@ with tabs[9]:
         st.warning(f"Demand-censoring artifacts are not published yet. Run the Demand Censoring Sensitivity workflow. Details: {exc}")
 
 
-with tabs[10]:
+if active_page == "Inventory scenarios":
     st.subheader("Inventory policy scenario grid")
     st.caption("Compare replenishment policies across lead times, review cycles, storage capacity, minimum order quantities and pack-size assumptions.")
     try:

@@ -38,6 +38,7 @@ flowchart TD
 | `scripts/profile_and_process_r2.py` | Profile and re-encode R2 data |
 | `scripts/stockout_diagnostics.py` | Stockout-exposure diagnostics |
 | `scripts/sql_eda.py` | DuckDB SQL exploratory analysis |
+| `scripts/full_dataset_eda.py` | Complete EDA across all 19 original source fields and both splits |
 | `src/train_model.py` | Point-forecast feature engineering and LightGBM training |
 | `src/train_quantile_models.py` | P10/P50/P90 forecasting and conformal interval adjustment |
 | `src/simulate_inventory.py` | Inventory policy simulation from held-out forecast rows |
@@ -80,6 +81,33 @@ Feature construction shifts sales and stock-status summaries before computing la
 - Stockout-bucket summaries are descriptive associations, not causal lost-sales estimates.
 - The technical meaning of stock-status encodings should be checked against the dataset documentation before interpreting them directionally.
 - Inventory simulation uses observed sales as a demand proxy and is conditional on configurable initial stock, lead time, review cadence, holding cost, shortage penalty, and order cost.
+
+## Full original-dataset exploration
+
+The **Dataset explorer** dashboard tab is backed by a separate R2 report produced by
+`scripts/full_dataset_eda.py`. It profiles the original FreshRetailNet-50K train and
+evaluation Parquet files together, while retaining split-level row counts and date
+coverage. The report validates the expected 19-column source schema before publishing.
+
+The feature explorer covers all original fields: city/store identifiers; management,
+first-, second- and third-level product categories; product identifier; date; normalized
+daily sales; 24-position hourly sales; operating-hour stockout count; 24-position hourly
+stock status; discount factor; holiday and activity flags; precipitation; temperature;
+humidity; and wind level. It includes per-field null/distinct counts, numeric summaries
+and histograms, categorical frequency tables, vector-length checks, hourly profiles,
+daily trends, calendar/discount/stockout breakdowns, hierarchy summaries and numeric
+correlations.
+
+Run **FreshRetailNet SQL and full dataset EDA** from GitHub Actions after ingestion to
+publish `dataset-eda/full_dataset_eda.json` to private R2. The dashboard reads this
+artifact through `/api/v1/dataset-eda`. Until the workflow publishes it, the EDA tab
+shows an actionable availability message. These views are descriptive: normalized
+observed sales can be censored by stockouts, and correlations or group differences
+are not causal effects.
+
+The Forecast explorer and Experiment lab use searchable Store and Product dropdowns.
+The Product options are dependent on the selected Store and are retrieved through
+the API rather than rendering a 50,000-item list in the browser.
 
 ## Evaluation methodology
 
