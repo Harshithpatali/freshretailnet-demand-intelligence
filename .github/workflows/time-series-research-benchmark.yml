@@ -3,7 +3,7 @@ name: Advanced Time-Series Research Benchmark
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, feat/stochastic-inventory-ts-research]
     paths:
       - "experiments/time_series/research_benchmark.py"
       - "experiments/wavelet/features.py"
