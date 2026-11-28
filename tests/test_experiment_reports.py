@@ -115,3 +115,51 @@ def test_inventory_scenario_runner_compares_structural_assumptions():
     assert set(out["policy"]) == {"seasonal_naive_lag7", "p50", "p90_calibrated"}
     assert out["scenario"].nunique() == 3
     assert out["total_simulated_cost"].ge(0).all()
+
+
+
+def test_forecast_monitoring_flags_nominal_coverage_miss_and_exposure_groups():
+    frame = pd.DataFrame({
+        "date": pd.date_range("2025-02-01", periods=2).repeat(4),
+        "actual_sale_amount": [10.0] * 8,
+        "p10": [9.5] * 8, "p50": [10.0] * 8, "p90": [10.5] * 8,
+        "p10_calibrated": [9.5, 9.5, 0.0, 0.0] * 2,
+        "p90_calibrated": [10.5, 10.5, 1.0, 1.0] * 2,
+        "stock_hour6_22_cnt": [0, 0, 1, 1, 0, 0, 1, 1],
+    })
+    report, daily, drift, exposure, time_exposure = build_monitoring_report(
+        frame, min_exposure_group_rows=1
+    )
+    alert_codes = {alert["code"] for alert in report["alerts"]}
+    assert "INTERVAL_COVERAGE_LOW" in alert_codes
+    assert "STOCKOUT_SEGMENT_COVERAGE_LOW" in alert_codes
+    assert len(time_exposure) > 0
+
+
+def test_artifact_provenance_hashes_inputs_and_versions_output(tmp_path, monkeypatch):
+    from scripts.artifact_provenance import build_provenance, versioned_key
+
+    snapshot = tmp_path / "snapshot.txt"
+    snapshot.write_text("fresh-retailnet-snapshot")
+    monkeypatch.setenv("GITHUB_SHA", "abc123def4567890")
+    monkeypatch.setenv("GITHUB_RUN_ID", "123456")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    manifest = build_provenance(
+        "test-workflow", {"raw/train.parquet": snapshot},
+        "2024-07-01", "2024-07-14", {"folds": 5},
+        outputs=["reports/report.json"],
+    )
+    key = versioned_key("reports/report.json", manifest)
+    assert manifest["data_snapshot"]["sha256"]
+    assert manifest["data_snapshot"]["inputs"]["raw/train.parquet"]["sha256"]
+    assert "abc123def456" in key
+    assert "123456-attempt-2" in key
+
+
+def test_target_date_feature_audit_excludes_uncertified_dataset_flags():
+    from scripts.feature_availability_audit import target_calendar_feature_audit
+
+    audit = target_calendar_feature_audit(["holiday_flag", "activity_flag", "sale_amount"])
+    assert audit["dataset_target_date_flags_excluded"] == ["activity_flag", "holiday_flag"]
+    assert "target_day_of_week" in audit["deterministic_target_date_features_used"]
+    assert "publication time" in audit["excluded_reason"]
