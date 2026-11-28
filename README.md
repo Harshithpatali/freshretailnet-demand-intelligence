@@ -220,6 +220,10 @@ forecasting tests, and runs Ruff static checks. The checks monkeypatch R2 access
 they do not require production credentials or assert that remote artifacts exist.
 
 
+## Later untouched evaluation gate
+
+The released benchmark evaluation ends on 2024-07-02. The project includes a fail-closed gate for a separate `raw/later_holdout.parquet` snapshot with at least 14 strictly later, contiguous dates and at least 95% of the benchmark store-product population. The gate validates readiness only; frozen model scoring is a separate subsequent step. See [later holdout requirements and procedure](docs/LATER_HOLDOUT_READINESS.md). No later holdout result is claimed until that external snapshot is supplied and scored.
+
 ## Extended validation and monitoring
 
 Verified batch reports:
