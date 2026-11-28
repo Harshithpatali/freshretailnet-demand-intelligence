@@ -71,7 +71,7 @@ def main() -> None:
 
     sections = markdown.split("## Part ")[1:]
     if len(sections) != 4:
-        raise RuntimeError(f"Expected three report sections, received {len(sections)}.")
+        raise RuntimeError(f"Expected four report sections, received {len(sections)}.")
     usage_parts = (result.get("usage") or {}).get("parts") or []
     capped_parts = [
         index for index, item in enumerate(usage_parts, start=1)
