@@ -19,6 +19,8 @@ on:
     paths:
       - ".github/workflows/stakeholder-brief-smoke-test.yml"
       - "scripts/smoke_test_stakeholder_brief.py"
+      - "api/main.py"
+      - "tests/test_api_helpers.py"
 
 permissions:
   contents: read

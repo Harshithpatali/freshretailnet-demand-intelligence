@@ -1006,7 +1006,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         parts = _stakeholder_prompt_parts(request, evidence, sources, missing)
         system_message = _stakeholder_system_prompt()
         max_prompt_characters = 5_000
-        max_completion_tokens = 750
+        max_completion_tokens = 550
         prompt_sizes = [
             len(system_message) + len(part["user_message"])
             for part in parts
