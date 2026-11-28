@@ -56,7 +56,7 @@ freshness = {
     "Quantile forecast": quant.get("generated_at_utc"),
     "Stockout diagnostics": stock.get("generated_at_utc"),
 }
-tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation", "SQL EDA", "Experiment lab", "Wavelet benchmark"])
+tabs = st.tabs(["Executive overview", "Forecast explorer", "Uncertainty & calibration", "Stockout diagnostics", "Inventory optimisation", "SQL EDA", "Experiment lab", "Wavelet benchmark", "Forecast monitoring", "Demand censoring", "Inventory scenarios"])
 
 with tabs[0]:
     ev = point.get("evaluation", {})
@@ -378,3 +378,120 @@ with tabs[6]:
 with tabs[7]:
     from wavelet_tab import render_wavelet_tab
     render_wavelet_tab(API, get_json, metric, compact_table)
+
+
+
+with tabs[8]:
+    st.subheader("Forecast quality monitoring")
+    st.caption("Batch monitoring of the published evaluation predictions. Error and coverage are lagging metrics and require actual outcomes.")
+    try:
+        monitor = get_json("/api/v1/monitoring/forecast-quality")
+        overall = monitor.get("overall", {})
+        m1, m2, m3, m4 = st.columns(4)
+        with m1: metric("MAE", f"{overall.get('mae', float('nan')):.3f}")
+        with m2: metric("WAPE", f"{overall.get('wape_pct', float('nan')):.1f}%")
+        with m3: metric("Calibrated coverage", f"{overall.get('calibrated_p10_p90_coverage_pct', float('nan')):.1f}%", f"Nominal {monitor.get('nominal_interval_coverage_pct', 80):.0f}%")
+        with m4: metric("Forecast bias", f"{overall.get('bias_pct', float('nan')):.1f}%")
+        st.caption(f"Monitoring period: {monitor.get('evaluation_period', {}).get('start')} to {monitor.get('evaluation_period', {}).get('end')}")
+        alerts = monitor.get("alerts", [])
+        if alerts:
+            for alert in alerts:
+                st.warning(f"{alert.get('code')}: {alert.get('message')}")
+        else:
+            st.success("No configured alert thresholds were breached in this batch.")
+        try:
+            drift_data = get_json("/api/v1/monitoring/forecast-quality/drift")
+            drift_df = pd.DataFrame(drift_data.get("rows", []))
+            st.markdown("#### Distribution shift (PSI)")
+            if not drift_df.empty:
+                compact_table(drift_df, 220)
+        except Exception as exc:
+            st.info(f"Drift report is not available yet: {exc}")
+        try:
+            daily_data = get_json("/api/v1/monitoring/forecast-quality/daily")
+            daily_df = pd.DataFrame(daily_data.get("rows", []))
+            if not daily_df.empty:
+                daily_df["date"] = pd.to_datetime(daily_df["date"])
+                st.markdown("#### Daily forecast error and interval coverage")
+                daily_long = daily_df.melt(
+                    id_vars=["date"], value_vars=["mae", "calibrated_coverage_pct"],
+                    var_name="metric", value_name="value"
+                )
+                daily_fig = px.line(daily_long, x="date", y="value", color="metric",
+                                    markers=True, title="Daily MAE and calibrated coverage")
+                daily_fig.update_layout(height=360)
+                st.plotly_chart(daily_fig, use_container_width=True)
+                compact_table(daily_df, 260)
+        except Exception as exc:
+            st.info(f"Daily metrics are not available yet: {exc}")
+        st.caption("PSI compares the first and second chronological halves of the available evaluation window. It is a retrospective drift signal, not a live training-versus-production test.")
+    except Exception as exc:
+        st.warning(f"Monitoring artifacts are not published yet. Run the Forecast Quality and Drift Monitoring workflow. Details: {exc}")
+
+
+with tabs[9]:
+    st.subheader("Demand censoring sensitivity")
+    st.caption("Observed sales during out-of-stock hours can understate demand. These are explicit imputation scenarios, not causal lost-sales estimates.")
+    try:
+        censoring = get_json("/api/v1/demand-censoring/sensitivity")
+        c1, c2, c3 = st.columns(3)
+        with c1: metric("Evaluation rows", f"{censoring.get('evaluation_rows', 0):,}")
+        with c2: metric("Stockout-affected rows", f"{censoring.get('stockout_affected_row_rate_pct', float('nan')):.1f}%")
+        with c3: metric("Central missed-sales proxy", f"{censoring.get('expected_lost_sales_proxy_units', 0):,.1f}")
+        st.caption(f"Evaluation period: {censoring.get('evaluation_start')} to {censoring.get('evaluation_end')}")
+        st.info(censoring.get("interpretation", "Sensitivity assumptions only."))
+        try:
+            bucket_data = get_json("/api/v1/demand-censoring/sensitivity/buckets")
+            bucket_df = pd.DataFrame(bucket_data.get("rows", []))
+            if not bucket_df.empty:
+                st.markdown("#### Sales and imputation sensitivity by stockout exposure")
+                compact_table(bucket_df, 300)
+                chart_cols = [x for x in ["counterfactual_sales_lower_units", "counterfactual_sales_central_units", "counterfactual_sales_upper_units"] if x in bucket_df]
+                if chart_cols:
+                    chart_df = bucket_df.melt(id_vars=["stockout_bucket"], value_vars=chart_cols,
+                                              var_name="scenario", value_name="units")
+                    fig = px.bar(chart_df, x="stockout_bucket", y="units", color="scenario",
+                                 barmode="group", title="Counterfactual sales sensitivity by exposure")
+                    fig.update_layout(height=380, yaxis_title="Scenario units")
+                    st.plotly_chart(fig, use_container_width=True)
+        except Exception as exc:
+            st.info(f"Exposure breakdown is not available yet: {exc}")
+        st.warning("The central proxy imputes each out-of-stock hour using historical in-stock sales for the same store-product-hour, with a global hourly fallback. It assumes those rates represent demand during stockouts; validate before using as a label.")
+    except Exception as exc:
+        st.warning(f"Demand-censoring artifacts are not published yet. Run the Demand Censoring Sensitivity workflow. Details: {exc}")
+
+
+with tabs[10]:
+    st.subheader("Inventory policy scenario grid")
+    st.caption("Compare replenishment policies across lead times, review cycles, storage capacity, minimum order quantities and pack-size assumptions.")
+    try:
+        scenario_summary = get_json("/api/v1/inventory/scenarios")
+        scenario_rows = get_json("/api/v1/inventory/scenarios/comparison")
+        scenario_df = pd.DataFrame(scenario_rows.get("rows", []))
+        st.caption(
+            f"{scenario_summary.get('evaluation_rows', 0):,} evaluation rows · "
+            f"{scenario_summary.get('store_product_series', 0):,} store-product series · "
+            f"{scenario_summary.get('evaluation_start')} to {scenario_summary.get('evaluation_end')}"
+        )
+        if not scenario_df.empty:
+            scenario_names = sorted(scenario_df["scenario"].dropna().astype(str).unique())
+            chosen_scenario = st.selectbox("Scenario", scenario_names, key="inventory_scenario_choice")
+            selected_scenario = scenario_df[scenario_df["scenario"].astype(str) == chosen_scenario]
+            display_cols = [c for c in [
+                "policy", "lead_time_days", "review_period_days", "fill_rate_pct",
+                "steady_state_fill_rate_pct", "total_simulated_cost",
+                "steady_state_total_cost", "constraint_limited_units",
+                "constraint_limited_orders", "shortage_penalty_per_unit",
+                "storage_capacity_basis", "max_order_basis", "pack_size",
+            ] if c in selected_scenario]
+            compact_table(selected_scenario[display_cols], 300)
+            fig = px.scatter(
+                selected_scenario, x="total_simulated_cost", y="fill_rate_pct",
+                color="policy", hover_data=[c for c in ["lead_time_days", "review_period_days", "pack_size"] if c in selected_scenario],
+                title="Fill rate versus simulated cost"
+            )
+            fig.update_layout(height=380, xaxis_title="Total simulated cost", yaxis_title="Fill rate (%)")
+            st.plotly_chart(fig, use_container_width=True)
+        st.warning("All capacity, MOQ, pack-size, cost and lead-time values are simulation assumptions. Observed sales may be censored; these results are not measured operational savings.")
+    except Exception as exc:
+        st.warning(f"Inventory scenario artifacts are not published yet. Run the Inventory Lead-Time and Constraint Scenarios workflow. Details: {exc}")
