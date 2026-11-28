@@ -67,6 +67,8 @@ streamlit run app.py
 - Artifact cache TTL: `ARTIFACT_CACHE_TTL_SECONDS` (default 300 seconds); API cache invalidation is also available through `clear_artifact_caches()` for in-process maintenance.
 - `GET /api/v1/stockout`, `/stockout/buckets`, `/stockout/hourly`
 - `GET /api/v1/inventory`, `/inventory/series`, `/inventory/sensitivity`
+- `GET /api/v1/inventory/optimization`, `/inventory/optimization/scenarios`, `/inventory/optimization/plan`
+- `GET /api/v1/research/time-series`, `/research/time-series/comparison`, `/research/time-series/ablation`, `/research/time-series/diagnostics`
 
 ## Interpretation and limitations
 
