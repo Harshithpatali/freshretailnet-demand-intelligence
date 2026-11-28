@@ -44,7 +44,6 @@ def validate_later_holdout(base_eval_max: str, base_series: int, later: pl.DataF
         raise ValueError(
             f"Later holdout has {len(dates)} unique dates; at least {MIN_HOLDOUT_DAYS} are required"
         )
-    first_later = dates[0]
     duplicate_rows = later.select(
         pl.struct(["store_id", "product_id", "dt"]).is_duplicated().sum()
     ).item()
