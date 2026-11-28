@@ -252,3 +252,83 @@ def test_dashboard_source_does_not_render_raw_json_widgets():
         source = path.read_text(encoding="utf-8")
         assert "st.json(" not in source
         assert "st.write({" not in source
+
+
+
+def test_stakeholder_evidence_is_compacted_before_sending_to_groq(monkeypatch):
+    raw_inventory = {
+        "generated_at_utc": "2026-11-28T00:00:00Z",
+        "evaluation_population": {
+            "target_date_start": "2024-01-01",
+            "target_date_end": "2024-03-10",
+            "target_dates": 70,
+            "complete_continuous_series": 2600,
+            "total_series_with_any_prediction": 3000,
+        },
+        "scenario_results": [{
+            "scenario": "balanced_90pct",
+            "target_fill_rate": 0.9,
+            "empirical_fill_rate": 0.8,
+            "feature_gain_dump": ["must not be forwarded"],
+        }],
+    }
+    raw_forecast = {
+        "series_sample_size_complete": 3000,
+        "rolling_design": {
+            "pooled_test_metrics": [{"model": "baseline", "mae": 0.4}],
+            "folds": [{
+                "fold": "fold-1",
+                "test_dates": ["2024-01-01", "2024-01-07"],
+                "test_metrics": [{"model": "residual", "mae": 0.38}],
+                "feature_gain": [{"feature": f"f{i}", "gain": i} for i in range(500)],
+            }],
+        },
+        "final_research_comparison": {
+            "ensemble_weights": {"residual": 1.0},
+            "bootstrap_vs_baseline": {"comparisons_vs_baseline": {"mae": {"mean": 5.0}}},
+        },
+    }
+    monkeypatch.setattr(
+        api, "_stakeholder_evidence",
+        lambda: (
+            {"inventory_optimizer": raw_inventory, "forecast_research": raw_forecast},
+            ["inventory.json", "forecast.json"],
+            [],
+        ),
+    )
+    raw, sources, missing = api._stakeholder_evidence()
+    compact = api._compact_stakeholder_evidence(raw)
+
+    assert compact["inventory_optimizer"]["scenario_results"][0]["empirical_fill_rate"] == 0.8
+    assert "feature_gain_dump" not in compact["inventory_optimizer"]["scenario_results"][0]
+    assert "feature_gain" not in compact["forecast_research"]["rolling_design"]["folds"][0]
+    assert compact["forecast_research"]["series_sample_size_complete"] == 3000
+    assert sources == ["inventory.json", "forecast.json"]
+    assert missing == []
+
+
+def test_groq_rate_limit_is_returned_as_actionable_429():
+    from types import SimpleNamespace
+
+    error = SimpleNamespace(
+        status_code=429,
+        body={"error": {"message": "rate limit exceeded"}},
+        message="upstream rate limit",
+    )
+    response = api._groq_http_exception(error, "openai/gpt-oss-120b")
+    assert response.status_code == 429
+    assert response.detail["upstream_status"] == 429
+    assert "rate limit" in response.detail["action"].lower()
+
+
+def test_groq_authentication_error_is_reported_as_configuration_issue():
+    from types import SimpleNamespace
+
+    error = SimpleNamespace(
+        status_code=401,
+        body={"error": {"message": "invalid api key"}},
+        message="authentication failed",
+    )
+    response = api._groq_http_exception(error, "openai/gpt-oss-120b")
+    assert response.status_code == 503
+    assert "GROQ_API_KEY" in response.detail["action"]

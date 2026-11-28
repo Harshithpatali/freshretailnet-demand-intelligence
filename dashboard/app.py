@@ -451,8 +451,29 @@ if active_page == "Stakeholder briefing":
                 )
                 response.raise_for_status()
                 st.session_state["stakeholder_brief_payload"] = response.json()
+            except requests.HTTPError as exc:
+                detail = None
+                try:
+                    body = exc.response.json()
+                    detail = body.get("detail") if isinstance(body, dict) else None
+                except (ValueError, AttributeError):
+                    detail = None
+                if isinstance(detail, dict):
+                    message = detail.get("message", "The Groq request failed.")
+                    action = detail.get("action", "Check the API service logs.")
+                    upstream_status = detail.get("upstream_status")
+                    code = detail.get("code", "stakeholder_brief_error")
+                    status_text = f" (Groq status {upstream_status})" if upstream_status else ""
+                    st.error(f"{code}{status_text}: {message}")
+                    st.info(action)
+                elif detail:
+                    st.error(f"Stakeholder briefing could not be generated: {detail}")
+                else:
+                    st.error(f"Stakeholder briefing could not be generated: {exc}")
+            except requests.RequestException as exc:
+                st.error(f"Could not reach the API service: {exc}")
             except Exception as exc:
-                st.error(f"Stakeholder briefing could not be generated: {exc}")
+                st.error(f"Unexpected stakeholder briefing error: {type(exc).__name__}. Check the API logs.")
     payload = st.session_state.get("stakeholder_brief_payload")
     if payload:
         st.markdown(

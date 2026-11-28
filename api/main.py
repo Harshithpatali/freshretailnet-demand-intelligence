@@ -1,6 +1,7 @@
 """Read-only API for FreshRetailNet forecasting and inventory artifacts."""
 from __future__ import annotations
-import io, math, os, time
+import io, math, os, time, logging
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
 import boto3
@@ -10,9 +11,11 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title="FreshRetailNet Demand Intelligence API",
-    version="1.1.0",
+    version="1.2.0",
     description="Analytics artifacts and evidence-grounded Groq stakeholder explanations.",
 )
 app.add_middleware(
@@ -49,6 +52,158 @@ def _stakeholder_evidence() -> tuple[dict[str, Any], list[str], list[str]]:
             evidence[name] = None
             missing.append(key)
     return evidence, available, missing
+
+
+
+def _pick_fields(payload: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {}
+    return {key: payload[key] for key in fields if key in payload}
+
+
+def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
+    """Keep only decision-relevant aggregates; omit fold feature gains and verbose metadata."""
+    inventory = raw.get("inventory_optimizer") or {}
+    scenarios = []
+    for row in inventory.get("scenario_results", []) if isinstance(inventory, Mapping) else []:
+        if not isinstance(row, Mapping):
+            continue
+        scenarios.append(_pick_fields(row, (
+            "scenario", "target_fill_rate", "empirical_fill_rate",
+            "empirical_cycle_service_level", "service_target_met_empirically",
+            "theoretical_expected_fill_rate", "total_simulated_cost",
+            "actual_protection_demand", "fulfilled_protection_demand",
+            "unfulfilled_protection_demand", "leftover_stock",
+            "capacity_limited_store_count", "service_target_met_store_count",
+            "store_count", "mean_storage_utilization_pct",
+            "mean_replenishment_utilization_pct", "capacity_stress",
+        )))
+    inventory_capacity = inventory.get("capacity_diagnostics", []) if isinstance(inventory, Mapping) else []
+    distribution = inventory.get("distribution_diagnostics", {}) if isinstance(inventory, Mapping) else {}
+    if isinstance(distribution, Mapping):
+        distribution = _pick_fields(distribution, (
+            "reference_optimizer_distribution", "challengers", "scored_on",
+            "results", "limitations",
+        ))
+    compact_inventory = {
+        "generated_at_utc": inventory.get("generated_at_utc") if isinstance(inventory, Mapping) else None,
+        "evaluation_population": _pick_fields(
+            inventory.get("evaluation_population", {}) if isinstance(inventory, Mapping) else {},
+            ("target_date_start", "target_date_end", "target_dates",
+             "complete_continuous_series", "total_series_with_any_prediction"),
+        ),
+        "calibration_design": _pick_fields(
+            inventory.get("calibration_design", {}) if isinstance(inventory, Mapping) else {},
+            ("windows_per_series", "bias_estimator", "scale_estimator", "prior_strength"),
+        ),
+        "evaluation_design": _pick_fields(
+            inventory.get("evaluation_design", {}) if isinstance(inventory, Mapping) else {},
+            ("windows_per_series", "purpose"),
+        ),
+        "scenario_results": scenarios,
+        "capacity_diagnostics": inventory_capacity[:5] if isinstance(inventory_capacity, list) else [],
+        "segment_results": (
+            inventory.get("segment_results", [])[:30]
+            if isinstance(inventory, Mapping) and isinstance(inventory.get("segment_results"), list)
+            else []
+        ),
+        "distribution_diagnostics": distribution,
+        "limitations": (
+            inventory.get("limitations", [])[:8]
+            if isinstance(inventory, Mapping) and isinstance(inventory.get("limitations"), list)
+            else []
+        ),
+    }
+
+    forecast = raw.get("forecast_research") or {}
+    rolling = forecast.get("rolling_design", {}) if isinstance(forecast, Mapping) else {}
+    folds = []
+    if isinstance(rolling, Mapping):
+        for fold in rolling.get("folds", [])[:5]:
+            if not isinstance(fold, Mapping):
+                continue
+            folds.append(_pick_fields(fold, (
+                "fold", "training_target_dates", "validation_dates",
+                "test_dates", "test_metrics",
+                "ensemble_weights_selected_on_validation_tail",
+                "ensemble_diversity",
+            )))
+    final = forecast.get("final_research_comparison", {}) if isinstance(forecast, Mapping) else {}
+    compact_forecast = {
+        "generated_at_utc": forecast.get("generated_at_utc") if isinstance(forecast, Mapping) else None,
+        "series_sample_size_complete": forecast.get("series_sample_size_complete") if isinstance(forecast, Mapping) else None,
+        "rolling_design": {
+            "folds": folds,
+            "pooled_test_metrics": (
+                rolling.get("pooled_test_metrics", [])
+                if isinstance(rolling, Mapping) else []
+            ),
+        },
+        "final_research_comparison": _pick_fields(
+            final,
+            ("validation_period", "evaluation_period", "evaluation_rows",
+             "metrics", "ensemble_weights", "ensemble_diversity",
+             "ensemble_weight_cap", "bootstrap_vs_baseline",
+             "wavelet_ablation_vs_spectral", "status"),
+        ),
+        "limitations": (
+            forecast.get("limitations", [])[:8]
+            if isinstance(forecast, Mapping) and isinstance(forecast.get("limitations"), list)
+            else []
+        ),
+    }
+    return {
+        "inventory_optimizer": compact_inventory,
+        "forecast_research": compact_forecast,
+    }
+
+
+def _groq_http_exception(exc: Exception, model: str) -> HTTPException:
+    """Translate Groq SDK failures into safe, actionable API responses."""
+    upstream_status = getattr(exc, "status_code", None)
+    body = getattr(exc, "body", None)
+    message = getattr(exc, "message", None) or str(exc)
+    if isinstance(body, Mapping):
+        error_payload = body.get("error", body)
+        if isinstance(error_payload, Mapping):
+            message = str(error_payload.get("message") or message)
+    message = str(message).replace(os.getenv("GROQ_API_KEY", "\\0"), "[redacted]")
+    message = message[:700]
+
+    if upstream_status == 429:
+        action = "Groq rate limit reached. Wait for the retry window or check the Groq project limits."
+        status_code = 429
+    elif upstream_status == 401:
+        action = "Groq rejected the API key. Replace GROQ_API_KEY with an active key from the intended Groq project."
+        status_code = 503
+    elif upstream_status == 403:
+        action = "The Groq key or project lacks access to this model. Check model permissions in the Groq console."
+        status_code = 503
+    elif upstream_status == 404:
+        action = f"Groq could not find model '{model}'. Set GROQ_MODEL to an active model ID."
+        status_code = 503
+    elif upstream_status is not None and int(upstream_status) >= 500:
+        action = "Groq returned an upstream server error. Retry later and check Groq service status."
+        status_code = 503
+    elif upstream_status is not None:
+        action = "Groq rejected the request. Review the upstream message and model parameter support."
+        status_code = 502
+    elif type(exc).__name__ in {"APIConnectionError", "APITimeoutError"}:
+        action = "The API service could not reach Groq or the request timed out. Check outbound connectivity and retry."
+        status_code = 503
+    else:
+        action = "Unexpected stakeholder briefing failure. Check the API service logs using the exception type."
+        status_code = 500
+
+    detail = {
+        "code": "groq_upstream_error",
+        "upstream_status": upstream_status,
+        "exception_type": type(exc).__name__,
+        "model": model,
+        "message": message,
+        "action": action,
+    }
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 def _stakeholder_system_prompt() -> str:
@@ -526,18 +681,18 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
             status_code=503,
             detail="Groq is not configured. Add GROQ_API_KEY to the API service environment.",
         )
-    evidence, sources, missing = _stakeholder_evidence()
+    raw_evidence, sources, missing = _stakeholder_evidence()
     if not sources:
         raise HTTPException(
             status_code=503,
             detail="No inventory or forecasting research reports are available in R2.",
         )
     import json
+    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     try:
         from groq import Groq
 
-        model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-        client = Groq(api_key=api_key, timeout=50.0, max_retries=1)
+        evidence = _compact_stakeholder_evidence(raw_evidence)
         prompt = {
             "audience": request.audience,
             "focus": request.focus,
@@ -553,6 +708,10 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
                 "Next validation plan",
             ],
         }
+        client = Groq(api_key=api_key, timeout=45.0, max_retries=0)
+        request_options = {}
+        if model.startswith("openai/gpt-oss-"):
+            request_options["reasoning_effort"] = "low"
         completion = client.chat.completions.create(
             model=model,
             messages=[
@@ -560,7 +719,8 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False, default=str)},
             ],
             temperature=0.2,
-            max_completion_tokens=1800,
+            max_completion_tokens=1400,
+            **request_options,
         )
         brief = completion.choices[0].message.content or ""
         if not brief.strip():
@@ -579,7 +739,9 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
             ),
         }
     except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Groq stakeholder briefing failed ({type(exc).__name__}). Check model availability and API quota.",
-        ) from exc
+        logger.exception(
+            "Stakeholder brief generation failed: exception_type=%s model=%s",
+            type(exc).__name__,
+            model,
+        )
+        raise _groq_http_exception(exc, model) from exc
