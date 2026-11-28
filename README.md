@@ -102,6 +102,7 @@ The following reports publish aggregate results from successful R2-backed workfl
 | [Point forecast benchmark](docs/results/forecast_benchmark.md) | LightGBM vs seasonal-naive lag-7, error metrics, bias, dates and row counts |
 | [Quantile evaluation](docs/results/quantile_evaluation.md) | P10/P50/P90 pinball loss, raw and calibrated coverage, interval width and stockout-exposure strata |
 | [Inventory backtest](docs/results/inventory_backtest.md) | Fill-rate vs simulated-cost trade-offs for seasonal naive, P50 and calibrated P90 policies |
+| [Inventory scenario backtest](docs/results/inventory_scenario_backtest.md) | Lead time, review cadence, storage/MOQ/pack constraints and shortage-cost sensitivity |
 | [Segment rolling backtest](docs/results/segment_rolling_backtest.md) | 1-, 7- and 14-day challenger results, calibration and temporal-fold caveats |
 | [Consolidated experiment summary](docs/results/experiment_summary.csv) | Machine-readable summary of the published comparisons |
 
