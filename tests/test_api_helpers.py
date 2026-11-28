@@ -416,7 +416,7 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
     assert len(parts) == 4
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 500
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 400
         for part in parts
     )
     assert estimated_reserved_tokens < 7800
@@ -532,7 +532,7 @@ def test_stakeholder_brief_generates_four_sections_and_combines_them(monkeypatch
     assert "FreshRetailNet-LT" in calls[1]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[2]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[3]["messages"][1]["content"]
-    assert all(call["max_completion_tokens"] == 500 for call in calls)
+    assert all(call["max_completion_tokens"] == 400 for call in calls)
     for content in contents:
         assert content in result["brief_markdown"]
     assert result["generation_strategy"] == "four_part_groq"
@@ -677,7 +677,7 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
     assert len(parts) == 4
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 500
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 400
         for part in parts
     )
     assert estimated_reserved_tokens < 7800

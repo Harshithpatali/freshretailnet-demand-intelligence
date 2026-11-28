@@ -81,11 +81,11 @@ def main() -> None:
     usage_parts = (result.get("usage") or {}).get("parts") or []
     capped_parts = [
         index for index, item in enumerate(usage_parts, start=1)
-        if isinstance(item, dict) and item.get("completion_tokens", 0) >= 490
+        if isinstance(item, dict) and item.get("completion_tokens", 0) >= 390
     ]
     if capped_parts:
         raise RuntimeError(
-            f"Groq reached the 500-token completion cap in sections {capped_parts}; "
+            f"Groq reached the 400-token completion cap in sections {capped_parts}; "
             "report may be truncated."
         )
 
