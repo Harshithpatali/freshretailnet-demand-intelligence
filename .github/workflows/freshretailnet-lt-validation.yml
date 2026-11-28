@@ -1,0 +1,74 @@
+name: FreshRetailNet-LT External Temporal and Inventory Validation
+
+on:
+  push:
+    paths:
+      - "scripts/prepare_freshretailnet_lt_r2.py"
+      - "scripts/freshretailnet_lt_inventory_backtest.py"
+      - "experiments/demand_intelligence/segment_rolling_backtest.py"
+      - "experiments/demand_intelligence/cluster_bootstrap_report.py"
+      - ".github/workflows/freshretailnet-lt-validation.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: freshretailnet-lt-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  external-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install external benchmark dependencies
+        run: python -m pip install --upgrade boto3 polars pyarrow pandas numpy scikit-learn lightgbm
+      - name: Compile all external evaluation scripts
+        run: |
+          python -m py_compile scripts/prepare_freshretailnet_lt_r2.py
+          python -m py_compile experiments/demand_intelligence/segment_rolling_backtest.py
+          python -m py_compile experiments/demand_intelligence/cluster_bootstrap_report.py
+          python -m py_compile scripts/freshretailnet_lt_inventory_backtest.py
+      - name: Download, checksum and stage pinned FreshRetailNet-LT v1.0
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python -u scripts/prepare_freshretailnet_lt_r2.py
+      - name: Run five-fold external rolling test (14 days per test block)
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_TRAIN_KEY: external/freshretailnet-lt/v1.0/train.parquet
+          R2_EVAL_KEY: external/freshretailnet-lt/v1.0/eval.parquet
+          SEGMENT_BACKTEST_PREFIX: freshretailnet-lt-segment-backtest-artifacts
+          BACKTEST_DATASET_LABEL: FreshRetailNet-LT-v1.0
+          ROLLING_FOLDS: "5"
+          ROLLING_BLOCK_DAYS: "14"
+        run: python -u experiments/demand_intelligence/segment_rolling_backtest.py
+      - name: Calculate paired 500-replicate cluster-bootstrap intervals
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          SEGMENT_BACKTEST_PREFIX: freshretailnet-lt-segment-backtest-artifacts
+          BOOTSTRAP_REPS: "500"
+          BOOTSTRAP_SEED: "20261128"
+        run: python -u experiments/demand_intelligence/cluster_bootstrap_report.py
+      - name: Run 70-day inventory scenarios with seven-day replenishment lead time
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          SEGMENT_BACKTEST_PREFIX: freshretailnet-lt-segment-backtest-artifacts
+        run: python -u scripts/freshretailnet_lt_inventory_backtest.py
