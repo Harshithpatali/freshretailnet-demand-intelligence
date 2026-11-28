@@ -32,14 +32,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      GROQ_API_KEY: \${{ secrets.GROQ_API_KEY }}
-      GROQ_MODEL: \${{ vars.GROQ_MODEL }}
-      R2_ACCOUNT_ID: \${{ secrets.R2_ACCOUNT_ID }}
-      R2_ACCESS_KEY_ID: \${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: \${{ secrets.R2_SECRET_ACCESS_KEY }}
-      R2_BUCKET: \${{ secrets.R2_BUCKET }}
-      STAKEHOLDER_AUDIENCE: \${{ inputs.audience || 'Executive leadership' }}
-      STAKEHOLDER_FOCUS: \${{ inputs.focus || 'Explain the inventory service gap, forecast model comparisons, uncertainty experiments and next decisions.' }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      STAKEHOLDER_AUDIENCE: ${{ inputs.audience || 'Executive leadership' }}
+      STAKEHOLDER_FOCUS: ${{ inputs.focus || 'Explain the inventory service gap, forecast model comparisons, uncertainty experiments and next decisions.' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -69,7 +69,7 @@ jobs:
       - name: Upload generated stakeholder report
         uses: actions/upload-artifact@v4
         with:
-          name: stakeholder-brief-live-\${{ github.run_number }}
+          name: stakeholder-brief-live-${{ github.run_number }}
           path: |
             stakeholder-brief.md
             stakeholder-brief-run.json
