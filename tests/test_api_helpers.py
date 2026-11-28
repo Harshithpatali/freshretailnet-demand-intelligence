@@ -299,10 +299,10 @@ def test_stakeholder_evidence_is_compacted_before_sending_to_groq(monkeypatch):
     raw, sources, missing = api._stakeholder_evidence()
     compact = api._compact_stakeholder_evidence(raw)
 
-    assert compact["inventory"]["scenarios"][0]["empirical_fill_rate"] == 0.8
-    assert "feature_gain_dump" not in compact["inventory"]["scenarios"][0]
+    assert compact["inventory"]["scenario"]["empirical_fill_rate"] == 0.8
+    assert "feature_gain_dump" not in compact["inventory"]["scenario"]
     assert "rolling_design" not in compact["forecast"]
-    assert compact["forecast"]["complete_series_sample"] == 3000
+    assert compact["forecast"]["sample_series"] == 3000
     assert sources == ["inventory.json", "forecast.json"]
     assert missing == []
 
@@ -400,12 +400,12 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
     compact = api._compact_stakeholder_evidence(raw)
     encoded = __import__("json").dumps(compact, separators=(",", ":"))
 
-    assert len(compact["inventory"]["balanced_scenario_segments"]) == 6
-    assert len(compact["inventory"]["distribution_comparison"]["overall_scores"]) == 3
+    assert len(compact["inventory"]["segments"]) == 6
+    assert len(compact["inventory"]["distribution_scores"]) == 3
     assert "debug" not in encoded
     assert "feature_gain" not in encoded
     assert "raw_store_rows" not in encoded
-    assert len(encoded) < 4500
+    assert len(encoded) < 2500
 
 
 def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
@@ -421,4 +421,79 @@ def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
     assert exc.value.status_code == 413
     assert exc.value.detail["code"] == "stakeholder_prompt_too_large"
     assert exc.value.detail["prompt_characters"] > exc.value.detail["maximum_prompt_characters"]
+    assert exc.value.detail["maximum_prompt_characters"] == 5000
     assert "safe limit" in exc.value.detail["message"]
+
+
+
+def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget():
+    raw = {
+        "inventory_optimizer": {
+            "evaluation_population": {
+                "target_date_start": "2024-01-01", "target_date_end": "2024-03-10",
+                "target_dates": 70, "complete_continuous_series": 2613,
+                "notes": "x" * 5000,
+            },
+            "calibration_design": {"windows_per_series": 5},
+            "scenario_results": [{
+                "scenario": "balanced_90pct", "target_fill_rate": .9,
+                "empirical_fill_rate": .798, "theoretical_expected_fill_rate": .934,
+                "total_simulated_cost": 133913, "capacity_limited_store_count": 75,
+                "store_count": 842, "mean_replenishment_utilization_pct": 99.47,
+                "notes": "x" * 2000,
+            }],
+            "capacity_diagnostics": [{
+                "scenario": "balanced_90pct",
+                "replenishment_utilization_pct": {
+                    "p50": 99, "p95": 100, "share_at_least_95_pct": 85,
+                },
+            }],
+            "segment_results": [
+                {"scenario": "balanced_90pct", "segment_type": "store_size",
+                 "segment": name, "empirical_fill_rate": .8, "shortage_units": 100,
+                 "notes": "x" * 1000}
+                for name in ("small", "medium", "large")
+            ],
+            "distribution_diagnostics": {
+                "reference_optimizer_distribution": "moment_lognormal",
+                "results": [
+                    {"segment_type": "overall", "distribution": name,
+                     "median_mae": .3, "central_80_coverage_pct": 80}
+                    for name in ("moment_lognormal", "empirical_bootstrap", "conformal_residual")
+                ],
+            },
+        },
+        "forecast_research": {
+            "series_sample_size_complete": 3000,
+            "rolling_design": {
+                "pooled_test_metrics": [
+                    {"model": "baseline", "mae": .38, "rmse": .67, "wape_pct": 34.3},
+                    {"model": "residual_corrected", "mae": .37, "rmse": .66, "wape_pct": 34.1},
+                ],
+                "folds": [{"feature_gain": "x" * 5000}],
+            },
+            "final_research_comparison": {
+                "evaluation_period": ["2024-06-26", "2024-07-02"],
+                "status": "previously used holdout; not untouched",
+                "metrics": [
+                    {"model": name, "mae": .4, "rmse": .7, "wape_pct": 33.6}
+                    for name in ("baseline", "residual_corrected", "wavelet", "ensemble")
+                ],
+                "ensemble_weights": {"residual_corrected": .65, "spectral": .35},
+                "ensemble_diversity": {"effective_model_count": 1.9},
+                "bootstrap_vs_baseline": {
+                    "comparisons_vs_baseline": {
+                        "residual_corrected": {"mae": {
+                            "mean_improvement_pct": 5.1, "ci_95_low_pct": 1.7,
+                            "ci_95_high_pct": 8.7, "ci_excludes_zero": True,
+                        }}
+                    }
+                },
+            },
+        },
+    }
+    evidence = api._compact_stakeholder_evidence(raw)
+    encoded = __import__("json").dumps(evidence, separators=(",", ":"))
+    prompt_overhead = len(api._stakeholder_system_prompt()) + 1200
+    assert len(encoded) < 1800
+    assert prompt_overhead + len(encoded) < 5000

@@ -133,65 +133,68 @@ def _compact_bootstrap(payload: Any) -> dict[str, Any]:
 
 
 def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
-    """Build a small executive evidence pack; never forward verbose research reports."""
+    """Build a very small board-level evidence snapshot for the Groq free tier."""
     inventory = raw.get("inventory_optimizer") or {}
     if not isinstance(inventory, Mapping):
         inventory = {}
 
-    scenarios = _compact_rows(
-        inventory.get("scenario_results", []),
+    # One policy scenario is enough for the narrative; keep the baseline trade-off.
+    scenario_source = inventory.get("scenario_results", [])
+    balanced = next(
         (
-            "scenario", "target_fill_rate", "empirical_fill_rate",
-            "theoretical_expected_fill_rate", "total_simulated_cost",
-            "capacity_limited_store_count", "store_count",
-            "mean_replenishment_utilization_pct",
+            row for row in scenario_source
+            if isinstance(row, Mapping) and row.get("scenario") == "balanced_90pct"
         ),
-        limit=3,
+        scenario_source[0] if isinstance(scenario_source, list) and scenario_source else {},
+    )
+    scenarios = _compact_rows(
+        [balanced] if isinstance(balanced, Mapping) else [],
+        ("scenario", "target_fill_rate", "empirical_fill_rate",
+         "theoretical_expected_fill_rate", "total_simulated_cost",
+         "capacity_limited_store_count", "store_count",
+         "mean_replenishment_utilization_pct"),
+        limit=1,
     )
 
-    capacity_rows = []
-    for item in inventory.get("capacity_diagnostics", [])[:3]:
-        if not isinstance(item, Mapping):
+    capacity = []
+    for row in inventory.get("capacity_diagnostics", []):
+        if not isinstance(row, Mapping) or row.get("scenario") != "balanced_90pct":
             continue
-        utilization = item.get("replenishment_utilization_pct", {})
-        if not isinstance(utilization, Mapping):
-            utilization = {}
-        capacity_rows.append({
-            "scenario": item.get("scenario"),
-            "replenishment_p50_pct": utilization.get("p50"),
-            "replenishment_p95_pct": utilization.get("p95"),
-            "stores_at_95pct_or_more": utilization.get("share_at_least_95_pct"),
-            "stores_at_99pct_or_more": utilization.get("share_at_least_99_pct"),
-        })
+        util = row.get("replenishment_utilization_pct", {})
+        if isinstance(util, Mapping):
+            capacity.append({
+                "scenario": "balanced_90pct",
+                "replenishment_p50_pct": util.get("p50"),
+                "replenishment_p95_pct": util.get("p95"),
+                "stores_at_95pct_or_more_pct": util.get("share_at_least_95_pct"),
+            })
+        break
 
-    segment_rows = [
-        row for row in inventory.get("segment_results", [])
-        if isinstance(row, Mapping) and row.get("scenario") == "balanced_90pct"
-    ] if isinstance(inventory.get("segment_results", []), list) else []
+    segments_source = inventory.get("segment_results", [])
+    segments_source = [
+        row for row in segments_source
+        if isinstance(row, Mapping)
+        and row.get("scenario") == "balanced_90pct"
+    ] if isinstance(segments_source, list) else []
     segments = _compact_rows(
-        segment_rows,
+        segments_source,
         ("segment_type", "segment", "empirical_fill_rate", "shortage_units"),
         limit=6,
     )
 
-    distribution_payload = inventory.get("distribution_diagnostics", {})
-    distribution_results = (
-        distribution_payload.get("results", [])
-        if isinstance(distribution_payload, Mapping) else []
-    )
-    overall_distributions = [
-        row for row in distribution_results
+    dist = inventory.get("distribution_diagnostics", {})
+    dist_rows = dist.get("results", []) if isinstance(dist, Mapping) else []
+    dist_rows = [
+        row for row in dist_rows
         if isinstance(row, Mapping) and row.get("segment_type") == "overall"
-    ]
+    ] if isinstance(dist_rows, list) else []
     distributions = _compact_rows(
-        overall_distributions,
-        ("distribution", "median_mae", "central_80_coverage_pct",
-         "central_80_mean_width"),
+        dist_rows,
+        ("distribution", "median_mae", "central_80_coverage_pct"),
         limit=3,
     )
 
     population = inventory.get("evaluation_population", {})
-    calibration = inventory.get("calibration_design", {})
     compact_inventory = {
         "population": _pick_fields(
             population,
@@ -199,19 +202,13 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
              "complete_continuous_series"),
         ),
         "calibration_windows_per_series": (
-            calibration.get("windows_per_series")
-            if isinstance(calibration, Mapping) else None
+            inventory.get("calibration_design", {}).get("windows_per_series")
+            if isinstance(inventory.get("calibration_design"), Mapping) else None
         ),
-        "scenarios": scenarios,
-        "capacity_stress": capacity_rows,
-        "balanced_scenario_segments": segments,
-        "distribution_comparison": {
-            "reference_distribution": (
-                distribution_payload.get("reference_optimizer_distribution")
-                if isinstance(distribution_payload, Mapping) else None
-            ),
-            "overall_scores": distributions,
-        },
+        "scenario": scenarios[0] if scenarios else {},
+        "capacity": capacity,
+        "segments": segments,
+        "distribution_scores": distributions,
     }
 
     forecast = raw.get("forecast_research") or {}
@@ -224,75 +221,56 @@ def _compact_stakeholder_evidence(raw: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(final, Mapping):
         final = {}
 
-    pooled_metrics = _compact_rows(
-        rolling.get("pooled_test_metrics", []),
-        ("model", "mae", "rmse", "wape_pct", "bias_pct"),
-        limit=6,
-    )
-    final_metrics = _compact_rows(
-        final.get("metrics", []),
-        ("model", "mae", "rmse", "wape_pct", "bias_pct"),
-        limit=6,
-    )
+    def metric_rows(source: Any, limit: int = 4) -> list[dict[str, Any]]:
+        selected = []
+        if not isinstance(source, list):
+            return selected
+        priority = ("baseline", "residual_corrected", "wavelet", "ensemble")
+        by_name = {
+            str(row.get("model")): row
+            for row in source if isinstance(row, Mapping)
+        }
+        for name in priority:
+            if name in by_name:
+                selected.append(_pick_fields(
+                    by_name[name], ("model", "mae", "rmse", "wape_pct", "bias_pct")
+                ))
+            if len(selected) >= limit:
+                break
+        return selected
+
     weights = final.get("ensemble_weights", {})
     if not isinstance(weights, Mapping):
         weights = {}
-    weights = dict(list(weights.items())[:6])
+    weights = {
+        str(name): round(float(value), 3)
+        for name, value in list(weights.items())[:4]
+        if isinstance(value, (int, float))
+    }
 
     bootstrap = final.get("bootstrap_vs_baseline", {})
-    bootstrap_rows = {}
-    if isinstance(bootstrap, Mapping):
-        comparisons = bootstrap.get("comparisons_vs_baseline", {})
-        if isinstance(comparisons, Mapping):
-            # Residual correction is the primary decision-relevant challenger.
-            residual = comparisons.get("residual_corrected", {})
-            if isinstance(residual, Mapping):
-                mae = residual.get("mae", {})
-                if isinstance(mae, Mapping):
-                    bootstrap_rows["residual_corrected_mae"] = _pick_fields(
-                        mae,
-                        ("mean_improvement_pct", "ci_95_low_pct",
-                         "ci_95_high_pct", "ci_excludes_zero"),
-                    )
-
-    wavelet = final.get("wavelet_ablation_vs_spectral", {})
-    wavelet_rows = {}
-    if isinstance(wavelet, Mapping):
-        comparisons = wavelet.get("comparisons_vs_baseline", {})
-        candidate = comparisons.get("wavelet", {}) if isinstance(comparisons, Mapping) else {}
-        if isinstance(candidate, Mapping):
-            for metric_name in ("mae", "rmse", "wape"):
-                value = candidate.get(metric_name)
-                if isinstance(value, Mapping):
-                    wavelet_rows[metric_name] = _pick_fields(
-                        value,
-                        ("mean_improvement_pct", "ci_95_low_pct",
-                         "ci_95_high_pct", "ci_excludes_zero"),
-                    )
+    comparisons = bootstrap.get("comparisons_vs_baseline", {}) if isinstance(bootstrap, Mapping) else {}
+    residual = comparisons.get("residual_corrected", {}) if isinstance(comparisons, Mapping) else {}
+    mae_bootstrap = residual.get("mae", {}) if isinstance(residual, Mapping) else {}
+    residual_ci = _pick_fields(
+        mae_bootstrap,
+        ("mean_improvement_pct", "ci_95_low_pct", "ci_95_high_pct", "ci_excludes_zero"),
+    )
 
     compact_forecast = {
-        "complete_series_sample": forecast.get("series_sample_size_complete"),
-        "rolling_pooled_metrics": pooled_metrics,
-        "final_evaluation_period": final.get("evaluation_period"),
-        "final_metrics": final_metrics,
+        "sample_series": forecast.get("series_sample_size_complete"),
+        "rolling_metrics": metric_rows(rolling.get("pooled_test_metrics", []), limit=2),
+        "evaluation_period": final.get("evaluation_period"),
+        "final_metrics": metric_rows(final.get("metrics", []), limit=4),
         "ensemble_weights": weights,
-        "ensemble_diversity": _pick_fields(
-            final.get("ensemble_diversity", {}),
-            ("effective_model_count", "positive_weight_model_count",
-             "maximum_model_weight"),
+        "ensemble_effective_models": (
+            final.get("ensemble_diversity", {}).get("effective_model_count")
+            if isinstance(final.get("ensemble_diversity"), Mapping) else None
         ),
-        "ensemble_weight_cap": final.get("ensemble_weight_cap"),
-        "residual_correction_bootstrap_mae": bootstrap_rows,
-        "wavelet_ablation_vs_spectral": wavelet_rows,
-        "promotion_status": (
-            str(final.get("status", ""))[:180] if final.get("status") is not None else None
-        ),
+        "residual_mae_bootstrap": residual_ci,
+        "promotion_status": str(final.get("status", ""))[:120],
     }
-
-    return {
-        "inventory": compact_inventory,
-        "forecast": compact_forecast,
-    }
+    return {"inventory": compact_inventory, "forecast": compact_forecast}
 
 def _groq_http_exception(exc: Exception, model: str) -> HTTPException:
     """Translate Groq SDK failures into safe, actionable API responses."""
@@ -344,15 +322,12 @@ def _groq_http_exception(exc: Exception, model: str) -> HTTPException:
 
 def _stakeholder_system_prompt() -> str:
     return (
-        "You are a careful retail supply-chain analytics advisor. Use only facts in the "
-        "provided JSON evidence. Separate measured backtest outcomes, model-expected "
-        "outcomes, assumptions, and recommendations. Never describe simulated cost as "
-        "realized savings, observed sales as uncensored latent demand, or a model-expected "
-        "fill-rate constraint as achieved service. State uncertainty, sample limitations, "
-        "and missing evidence. Do not invent dates, currency, causal explanations, capacity "
-        "measurements, or business outcomes. Recommend reversible pilot decisions with "
-        "owners and measurable acceptance tests. This is decision support only; it does "
-        "not execute replenishment orders."
+        "You are a retail supply-chain analytics advisor. Use only supplied evidence. "
+        "Separate empirical results, model expectations and assumptions. Never call "
+        "simulated cost savings, expected fill achieved service, or observed sales latent "
+        "demand. Do not invent facts. State key limitations. Recommend reversible next "
+        "decisions with an owner and measurable acceptance test. This is decision support; "
+        "do not execute orders."
     )
 
 def _client():
@@ -835,20 +810,14 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
             "evidence": evidence,
             "available_source_artifacts": sources,
             "missing_source_artifacts": missing,
-            "required_sections": [
-                "Executive takeaway",
-                "Measured findings and their evaluation periods",
-                "Operational implications and capacity bottlenecks",
-                "Ranked decisions with owner and measurable acceptance test",
-                "What should not be promoted or claimed yet",
-                "Next validation plan",
-            ],
+            "format": "Use 5 short headings: Executive takeaway; Evidence; Decisions (ranked, owner, measurable acceptance test); Risks/not ready to promote; Next validation.",
+            "max_words": 450,
         }
         client = Groq(api_key=api_key, timeout=45.0, max_retries=0)
         user_message = json.dumps(prompt, ensure_ascii=False, default=str, separators=(",", ":"))
         system_message = _stakeholder_system_prompt()
         prompt_characters = len(system_message) + len(user_message)
-        max_prompt_characters = 7_000
+        max_prompt_characters = 5_000
         if prompt_characters > max_prompt_characters:
             raise HTTPException(
                 status_code=413,
@@ -877,7 +846,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
                 {"role": "user", "content": user_message},
             ],
             temperature=0.2,
-            max_completion_tokens=900,
+            max_completion_tokens=650,
             **request_options,
         )
         brief = completion.choices[0].message.content or ""
