@@ -61,8 +61,8 @@ def add_fourier_features(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
     dates = pd.to_datetime(out["date"])
     periods = {
-        "week": (dates.dt.dayofweek.to_numpy(dtype=float), 7.0, 3),
-        "year": (dates.dt.dayofyear.to_numpy(dtype=float), 365.25, 2),
+        "week": (dates.dt.day_of_week.to_numpy(dtype=float), 7.0, 3),
+        "year": (dates.dt.day_of_year.to_numpy(dtype=float), 365.25, 2),
     }
     for name, (position, period, max_harmonic) in periods.items():
         for harmonic in range(1, max_harmonic + 1):
@@ -355,7 +355,7 @@ def main() -> None:
         frame = frame.merge(wavelet, on=["store_id", "product_id", "date"], how="inner", validate="one_to_one")
         frame = frame.sort_values(["store_id", "product_id", "date"]).reset_index(drop=True)
         feature_families = {
-            "base": [c for c in base.columns if c not in {"date", "sale_amount"}],
+            "base": [c for c in base.columns if c not in {"date", "sale_amount"} and not c.startswith("fourier_")],
             "fourier": [c for c in base.columns if c.startswith("fourier_")],
             "stl": [c for c in frame.columns if c.startswith("stl_")],
             "spectral": [c for c in frame.columns if c.startswith("spectral_")],
