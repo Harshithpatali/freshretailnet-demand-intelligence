@@ -16,6 +16,8 @@ from scripts.forecast_monitoring import build_monitoring_report, population_stab
 from scripts.inventory_scenario_backtest import run_scenarios
 from src.simulate_inventory import simulate
 from src.train_quantile_models import conditional_conformal_adjustments, calibrated_interval_by_group
+from scripts.later_holdout_readiness import validate_later_holdout
+import polars as pl
 
 
 def test_censoring_sensitivity_bounds_and_zero_exposure():
@@ -200,3 +202,43 @@ def test_conditional_interval_applies_historical_exposure_bucket_only():
     assert lower[1] == pytest.approx(0.0)
     assert upper[1] == pytest.approx(6.0)
     assert summary["context_feature"] == "stockout_hours_roll_max_7"
+
+
+
+def _later_holdout_frame(start="2024-07-03", days=3):
+    dates = pd.date_range(start, periods=days, freq="D")
+    rows = []
+    for date in dates:
+        for store, product in (("s1", "p1"), ("s2", "p2")):
+            rows.append({
+                "store_id": store, "product_id": product, "dt": date.strftime("%Y-%m-%d"),
+                "sale_amount": 1.0, "hours_sale": [0.0] * 24,
+                "hours_stock_status": [0] * 24,
+            })
+    return pl.DataFrame(rows)
+
+
+def test_later_holdout_gate_accepts_only_a_later_contiguous_window(monkeypatch):
+    monkeypatch.setattr("scripts.later_holdout_readiness.MIN_HOLDOUT_DAYS", 3)
+    monkeypatch.setattr("scripts.later_holdout_readiness.MIN_SERIES_COVERAGE_PCT", 100.0)
+    result = validate_later_holdout("2024-07-02", 2, _later_holdout_frame())
+    assert result["status"] == "READY_FOR_FROZEN_MODEL_EVALUATION"
+    assert result["later_holdout_start"] == "2024-07-03"
+    assert result["later_holdout_days"] == 3
+    assert result["model_scoring_performed"] is False
+
+
+def test_later_holdout_gate_rejects_overlap_with_used_evaluation(monkeypatch):
+    monkeypatch.setattr("scripts.later_holdout_readiness.MIN_HOLDOUT_DAYS", 3)
+    monkeypatch.setattr("scripts.later_holdout_readiness.MIN_SERIES_COVERAGE_PCT", 100.0)
+    with pytest.raises(ValueError, match="not strictly after"):
+        validate_later_holdout("2024-07-02", 2, _later_holdout_frame(start="2024-07-02"))
+
+
+def test_later_holdout_gate_rejects_date_gaps(monkeypatch):
+    monkeypatch.setattr("scripts.later_holdout_readiness.MIN_HOLDOUT_DAYS", 3)
+    monkeypatch.setattr("scripts.later_holdout_readiness.MIN_SERIES_COVERAGE_PCT", 100.0)
+    frame = _later_holdout_frame()
+    frame = frame.filter(pl.col("dt") != "2024-07-04")
+    with pytest.raises(ValueError, match="contiguous daily window"):
+        validate_later_holdout("2024-07-02", 2, frame)
