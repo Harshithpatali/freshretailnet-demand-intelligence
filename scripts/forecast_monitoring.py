@@ -95,7 +95,6 @@ def build_monitoring_report(frame: pd.DataFrame, nominal_coverage_pct: float = 8
     p50 = np.maximum(data["p50"].to_numpy(dtype=float), 0.0)
     lower = np.maximum(data["p10_calibrated"].to_numpy(dtype=float), 0.0)
     upper = np.maximum(data["p90_calibrated"].to_numpy(dtype=float), lower)
-    raw_lower = np.maximum(data["p10"].to_numpy(dtype=float), 0.0)
     data["_abs_error"] = np.abs(y - p50)
     data["_signed_error"] = p50 - y
     data["_covered"] = (y >= lower) & (y <= upper)
