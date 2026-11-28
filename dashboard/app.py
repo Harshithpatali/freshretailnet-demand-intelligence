@@ -203,11 +203,69 @@ with tabs[2]:
                      "Raw interval width":obj.get("p10_p90_mean_width"),
                      "P50 MAE":obj.get("median_mae"),"P50 WAPE (%)":obj.get("median_wape_pct")})
     compact_table(pd.DataFrame(rows), 180)
-    st.write("Conformal calibration")
+    st.write("Global split-conformal calibration")
     st.json({"nominal_coverage_pct":cc.get("nominal_coverage_pct"),
              "validation":cc.get("validation_calibrated_interval"),
              "evaluation":cc.get("evaluation_calibrated_interval")})
-    st.warning("Evaluation coverage is below the 80% nominal target in the current run. Coverage also varies materially by stockout-exposure group; do not present these intervals as uniformly calibrated.")
+
+    conditional = quant.get("conditional_conformal_calibration", {})
+    if conditional:
+        st.markdown("#### Candidate: prior-exposure conditional conformal")
+        st.caption(
+            "The interval adjustment is chosen using the maximum stockout exposure in the previous seven days. "
+            "It does not use the current evaluation-day stock status to choose the interval."
+        )
+        base_strata = quant.get("evaluation_calibrated_stockout_exposure_strata", {})
+        cond_strata = quant.get("evaluation_conditional_calibrated_stockout_exposure_strata", {})
+        compare_rows = []
+        for bucket, candidate in cond_strata.items():
+            baseline = base_strata.get(bucket, {})
+            compare_rows.append({
+                "Prior exposure context": bucket,
+                "Rows": candidate.get("rows", 0),
+                "Global coverage (%)": baseline.get("coverage_pct"),
+                "Conditional coverage (%)": candidate.get("coverage_pct"),
+                "Coverage change (pp)": (
+                    candidate.get("coverage_pct", 0) - baseline.get("coverage_pct", 0)
+                    if baseline else None
+                ),
+                "Global width": baseline.get("mean_interval_width"),
+                "Conditional width": candidate.get("mean_interval_width"),
+            })
+        if compare_rows:
+            comparison = pd.DataFrame(compare_rows)
+            compact_table(comparison, 260)
+            high_group = comparison[comparison["Prior exposure context"].astype(str) == "16_hours"]
+            if not high_group.empty:
+                high = high_group.iloc[0]
+                k1, k2, k3 = st.columns(3)
+                with k1: metric("16+ hour rows", f"{int(high['Rows']):,}")
+                with k2: metric("Global coverage", f"{high['Global coverage (%)']:.1f}%")
+                with k3: metric("Conditional coverage", f"{high['Conditional coverage (%)']:.1f}%")
+                width_change = (
+                    high["Conditional width"] / high["Global width"] - 1
+                    if pd.notna(high["Global width"]) and high["Global width"] > 0
+                    else float("nan")
+                )
+                metric("16+ hour interval-width change", f"{width_change * 100:+.1f}%" if pd.notna(width_change) else "N/A")
+        st.json({
+            "method": conditional.get("method"),
+            "context_feature": conditional.get("context_feature"),
+            "validation_interval": conditional.get("validation_interval"),
+            "evaluation_interval": conditional.get("evaluation_interval"),
+            "evaluation_metrics": conditional.get("evaluation_metrics"),
+            "validation_group_adjustments": conditional.get("validation_group_adjustments"),
+        })
+        st.warning(
+            "This is a candidate calibration. Higher coverage is not automatically better if interval width grows excessively. "
+            "Compare coverage and width together, including the 16+ hour group, before promoting."
+        )
+    else:
+        st.info(
+            "No conditional-calibration experiment results are published yet. "
+            "The global split-conformal interval remains the active reported method."
+        )
+    st.warning("Global held-out coverage remains below the 80% nominal target in the existing benchmark. Read all exposure buckets with their sample sizes; intervals are not yet uniformly calibrated.")
 
 with tabs[3]:
     st.subheader("Stockout exposure and observed sales")
