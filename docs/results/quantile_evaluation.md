@@ -62,3 +62,23 @@ Coverage varies materially by exposure bucket, with particularly low coverage in
 - Interval width is expressed in the target's observed-sales units.
 
 Raw predictions and model files remain in private R2. This report publishes aggregate metrics only.
+
+
+## Subsequent experiment: prior-exposure conditional calibration
+
+A subsequent quantile training run added shifted stockout-exposure context and tested group-specific split-conformal adjustments. The method uses the maximum stockout-hours count during the preceding seven days, estimates adjustments from validation residuals only, and shrinks small/unstable groups toward the global adjustment.
+
+Workflow: [Train FreshRetailNet Quantile Forecasts #46130544925](https://github.com/Harshithpatali/freshretailnet-demand-intelligence/actions/runs/46130544925).
+
+| Actual evaluation-day exposure | Rows | Global calibrated coverage | Conditional coverage | Global mean width | Conditional mean width |
+|---|---:|---:|---:|---:|---:|
+| 0 hours | 206,562 | 80.48% | 80.40% | 1.10987 | 1.10818 |
+| 1–2 hours | 21,019 | 74.60% | 74.67% | 1.15197 | 1.15269 |
+| 3–5 hours | 42,823 | 75.42% | 75.52% | 1.11443 | 1.11588 |
+| 6–9 hours | 38,841 | 80.18% | 80.26% | 1.07727 | 1.07897 |
+| 10–15 hours | 28,214 | 74.94% | 74.95% | 1.05585 | 1.05701 |
+| 16+ hours | 12,541 | 42.66% | **41.62%** | 1.36076 | 1.35691 |
+
+Overall, the conditional interval achieved 77.61% evaluation coverage with mean width 1.11334. It did not fix the high-exposure problem: for 16+ actual stockout hours, coverage decreased by about 1.04 percentage points and mean width became slightly narrower. The candidate is **not promoted**; the global interval remains the reference.
+
+This result supersedes neither the original quantile benchmark nor the seven-day exposure-stratum table above: it is a separate later model-training run with added lagged exposure features. See the [conditional calibration report](conditional_interval_calibration.md) for methodology, validation adjustments and limitations.
