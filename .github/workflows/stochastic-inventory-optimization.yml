@@ -1,0 +1,38 @@
+name: Stochastic Inventory Optimization Benchmark
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/optimize_inventory.py"
+      - ".github/workflows/stochastic-inventory-optimization.yml"
+      - "scripts/artifact_provenance.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stochastic-inventory-optimization-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  optimize-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install optimization and storage dependencies
+        run: python -m pip install --upgrade boto3 pandas numpy scipy
+      - name: Compile optimizer
+        run: python -m py_compile scripts/optimize_inventory.py
+      - name: Run service-level, capacity and replenishment optimization grid
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python -u scripts/optimize_inventory.py
