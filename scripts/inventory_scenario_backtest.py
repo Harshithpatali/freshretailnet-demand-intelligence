@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,10 @@ from pathlib import Path
 import boto3
 import pandas as pd
 from botocore.config import Config
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.simulate_inventory import simulate, aggregate
 
