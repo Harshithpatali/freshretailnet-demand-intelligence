@@ -374,22 +374,26 @@ def _stakeholder_prompt_parts(
 ) -> list[dict[str, str]]:
     import json
 
+    # Focus is supplied once and capped so a long user instruction cannot consume
+    # the TPM budget three times.
+    focus = " ".join(request.focus.split())[:180]
+    audience = " ".join(request.audience.split())[:80]
+
     inventory_payload = {
         "part": "1/3 Inventory optimisation",
         "dataset": "FreshRetailNet-LT",
-        "audience": request.audience,
-        "focus": request.focus,
+        "audience": audience,
+        "focus": focus,
         "source_available": any("inventory_optimizer_summary" in item for item in sources),
         "source_missing": any("inventory_optimizer_summary" in item for item in missing),
         "evidence": evidence.get("inventory", {}),
         "instructions": (
-            "Write about 450-500 words. Explain the 70-day population, 5 calibration and 5 later "
-            "evaluation windows. Define target fill rate, theoretical expected fill, empirical fill, "
-            "cycle service level, percentage-point gap, replenishment/storage utilization percentiles, "
-            "capacity-limited stores, segment shortages, median MAE, pinball loss, central-80% coverage "
-            "and interval width. Interpret each provided result and the lognormal/bootstrap/conformal "
-            "comparison. Explain simulated holding/shortage/ordering cost as normalized assumptions, "
-            "not real savings. Finish with limitations and 2 practical next steps with owners/tests."
+            "Write 350-400 words. Explain the 70-day population (2,613 series, 842 stores), "
+            "five 7-day calibration and five later evaluation windows. Define target, theoretical "
+            "and empirical fill plus cycle service level; interpret their gap, capacity utilisation "
+            "and bottlenecks, segment shortages, median MAE, pinball loss, 80% coverage and interval "
+            "width. Compare lognormal, empirical-bootstrap and conformal demand distributions. "
+            "Costs are normalized simulations, not savings. End with 2 owner-assigned tests."
         ),
     }
 
@@ -405,17 +409,14 @@ def _stakeholder_prompt_parts(
     }
     forecast_metrics_payload = {
         "part": "2/3 Forecast accuracy and model comparisons",
-        "audience": request.audience,
-        "focus": request.focus,
+        "audience": audience,
         "evidence": forecast_metrics,
         "instructions": (
-            "Write about 450-500 words. Define MAE (average absolute prediction error), RMSE "
-            "(square-root average squared error, penalizing large misses), WAPE (total absolute "
-            "error divided by total actual volume) and signed bias (over/under-forecast tendency). "
-            "Compare every supplied candidate across pooled rolling and final-period results. Explain "
-            "relative improvements where supplied; lower MAE/RMSE/WAPE is better and bias near zero "
-            "is preferable. Explain Fourier/STL, spectral, wavelet, residual correction and ensemble "
-            "methods. Do not infer business savings from forecast accuracy."
+            "Write 350-400 words. Define MAE, RMSE, WAPE and signed bias. Compare every supplied "
+            "model on pooled rolling and final-period metrics; interpret relative improvements. "
+            "Explain Fourier/STL, spectral, wavelet, residual correction and ensemble experiments. "
+            "Lower error is better; bias near zero is preferable. Forecast accuracy is not business "
+            "savings. State that the final seven-day period was previously used, not untouched."
         ),
     }
 
@@ -430,16 +431,14 @@ def _stakeholder_prompt_parts(
     }
     forecast_experiments_payload = {
         "part": "3/3 Statistical evidence and experiment decisions",
-        "audience": request.audience,
-        "focus": request.focus,
+        "audience": audience,
         "evidence": forecast_experiments,
         "instructions": (
-            "Write about 400-450 words. Explain paired bootstrap mean improvements and 95% intervals; "
-            "say an interval crossing zero is inconclusive. Interpret the direct wavelet-vs-spectral "
-            "ablation. Explain whether ensemble weights show a genuine blend or model concentration. "
-            "State that the original seven-day evaluation was previously used, not untouched, and the "
-            "inventory and forecasting datasets are separate. Rank 2-3 next experiments with owners "
-            "and numeric acceptance tests. Do not promote a challenger before a later untouched holdout."
+            "Write 300-350 words. Interpret paired-bootstrap improvements and 95% intervals; "
+            "intervals crossing zero are inconclusive. Explain wavelet-versus-spectral ablation, "
+            "ensemble weights and effective model count (do not call a single-model selection a blend). "
+            "Rank 2-3 next experiments with owners and numeric acceptance tests. Require a later "
+            "untouched temporal holdout before promotion. Keep the two datasets separate."
         ),
     }
     return [
@@ -456,6 +455,7 @@ def _stakeholder_prompt_parts(
             "user_message": json.dumps(forecast_experiments_payload, ensure_ascii=False, default=str, separators=(",", ":")),
         },
     ]
+
 
 
 def _groq_http_exception(exc: Exception, model: str) -> HTTPException:
@@ -979,6 +979,20 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
             detail="Groq is not configured. Add GROQ_API_KEY to the API service environment.",
         )
     raw_evidence, sources, missing = _stakeholder_evidence()
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "stakeholder_sources_not_ready",
+                "message": (
+                    "The briefing requires both latest workflow summaries in R2. "
+                    "Wait until the inventory optimizer and forecast research workflows "
+                    "have completed successfully, then retry."
+                ),
+                "missing_artifacts": missing,
+                "available_artifacts": sources,
+            },
+        )
     if not sources:
         raise HTTPException(
             status_code=503,
@@ -992,7 +1006,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
         parts = _stakeholder_prompt_parts(request, evidence, sources, missing)
         system_message = _stakeholder_system_prompt()
         max_prompt_characters = 5_000
-        max_completion_tokens = 850
+        max_completion_tokens = 750
         prompt_sizes = [
             len(system_message) + len(part["user_message"])
             for part in parts
@@ -1029,7 +1043,7 @@ def generate_stakeholder_brief(request: StakeholderBriefRequest):
                 },
             )
 
-        client = Groq(api_key=api_key, timeout=35.0, max_retries=0)
+        client = Groq(api_key=api_key, timeout=30.0, max_retries=0)
         generated_sections = []
         usage_by_part = []
         for index, part in enumerate(parts, start=1):

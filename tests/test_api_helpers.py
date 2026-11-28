@@ -416,7 +416,7 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
     assert len(parts) == 3
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 850
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 750
         for part in parts
     )
     assert estimated_reserved_tokens < 6800
@@ -424,6 +424,29 @@ def test_compacted_stakeholder_evidence_omits_fold_level_payloads_and_limits_seg
     assert len(parts[0]["user_message"]) < 3000
     assert len(parts[1]["user_message"]) < 4000
     assert len(parts[2]["user_message"]) < 3500
+
+
+
+
+def test_stakeholder_brief_waits_for_both_latest_summary_artifacts(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr(
+        api,
+        "_stakeholder_evidence",
+        lambda: (
+            {"inventory_optimizer": {"scenario_results": []}, "forecast_research": None},
+            ["inventory-optimizer-artifacts/inventory_optimizer_summary.json"],
+            ["forecast-research-artifacts/forecast_research_summary.json"],
+        ),
+    )
+    with pytest.raises(HTTPException) as exc:
+        api.generate_stakeholder_brief(
+            api.StakeholderBriefRequest(audience="Executive leadership", focus="Explain the findings.")
+        )
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "stakeholder_sources_not_ready"
+    assert "forecast-research-artifacts/forecast_research_summary.json" in exc.value.detail["missing_artifacts"]
+
 
 
 def test_stakeholder_prompt_size_guard_raises_actionable_413(monkeypatch):
@@ -499,7 +522,7 @@ def test_stakeholder_brief_generates_three_sections_and_combines_them(monkeypatc
     assert "FreshRetailNet-LT" in calls[0]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[1]["messages"][1]["content"]
     assert "FreshRetailNet-50K" in calls[2]["messages"][1]["content"]
-    assert all(call["max_completion_tokens"] == 850 for call in calls)
+    assert all(call["max_completion_tokens"] == 750 for call in calls)
     assert "Inventory metric explanations." in result["brief_markdown"]
     assert "Forecast model comparisons." in result["brief_markdown"]
     assert "Forecast uncertainty experiments." in result["brief_markdown"]
@@ -645,7 +668,7 @@ def test_stakeholder_compact_snapshot_stays_well_below_free_tier_prompt_budget()
     assert len(parts) == 3
     assert all(len(api._stakeholder_system_prompt()) + len(part["user_message"]) < 5000 for part in parts)
     estimated_reserved_tokens = sum(
-        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 850
+        int(__import__("math").ceil((len(api._stakeholder_system_prompt()) + len(part["user_message"])) / 2.5)) + 750
         for part in parts
     )
     assert estimated_reserved_tokens < 6800
